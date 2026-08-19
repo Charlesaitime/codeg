@@ -183,10 +183,15 @@ export function saveShowCompleted(value: boolean): void {
 
 /** Whether the sidebar splits each repo's worktree child folders into their own
  *  indented sub-groups (instead of merging them flat into the parent group).
- *  Defaults to ON; only an explicitly-stored "false" (the user unchecked it)
- *  falls back to the flattened layout. */
+ *
+ *  Defaults to OFF: the flat layout is the primary one now that every session
+ *  row carries its own branch chip, which says which checkout it runs in
+ *  without spending a header and an indent level on each worktree. The
+ *  sub-group layout stays available for repos with enough worktrees to want
+ *  them separated — only an explicitly-stored "true" (the user checked it)
+ *  turns it on. */
 export function loadShowWorktrees(): boolean {
-  if (typeof window === "undefined") return true
+  if (typeof window === "undefined") return false
   try {
     const raw = localStorage.getItem(SHOW_WORKTREES_KEY)
     if (raw === "false") return false
@@ -194,7 +199,7 @@ export function loadShowWorktrees(): boolean {
   } catch {
     /* ignore */
   }
-  return true
+  return false
 }
 
 export function saveShowWorktrees(value: boolean): void {

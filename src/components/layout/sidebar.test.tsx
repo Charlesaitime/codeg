@@ -158,24 +158,27 @@ describe("Sidebar — Show worktree folders toggle", () => {
     mockState.activeFolder = { id: 7, path: "/x" }
   })
 
-  it("defaults Show worktree folders on and threads it to the conversation list", () => {
+  it("defaults Show worktree folders off and threads it to the conversation list", () => {
     renderSidebar()
-    expect(spies.listProps?.showWorktrees).toBe(true)
-  })
-
-  it("respects an explicitly-stored 'false' from localStorage", () => {
-    localStorage.setItem("workspace:sidebar-show-worktrees", "false")
-    renderSidebar()
-    // Hydration runs in a mount effect (flushed by render's act): a user who
-    // unchecked it keeps it off despite the default-on.
+    // Flat is the default layout: the branch chip on each session row already
+    // says which checkout it runs in, so a header + indent per worktree only
+    // pushes the sessions down.
     expect(spies.listProps?.showWorktrees).toBe(false)
   })
 
-  it("toggling the funnel item off persists the choice and threads it down", async () => {
+  it("respects an explicitly-stored 'true' from localStorage", () => {
+    localStorage.setItem("workspace:sidebar-show-worktrees", "true")
+    renderSidebar()
+    // Hydration runs in a mount effect (flushed by render's act): a user who
+    // checked it keeps the sub-groups despite the default-off.
+    expect(spies.listProps?.showWorktrees).toBe(true)
+  })
+
+  it("toggling the funnel item on persists the choice and threads it down", async () => {
     const user = userEvent.setup()
     renderSidebar()
-    // Default on with a cleared store.
-    expect(spies.listProps?.showWorktrees).toBe(true)
+    // Default off with a cleared store.
+    expect(spies.listProps?.showWorktrees).toBe(false)
 
     await user.click(screen.getByRole("button", { name: "View options" }))
     await user.click(
@@ -183,9 +186,9 @@ describe("Sidebar — Show worktree folders toggle", () => {
     )
 
     expect(localStorage.getItem("workspace:sidebar-show-worktrees")).toBe(
-      "false"
+      "true"
     )
-    expect(spies.listProps?.showWorktrees).toBe(false)
+    expect(spies.listProps?.showWorktrees).toBe(true)
   })
 })
 

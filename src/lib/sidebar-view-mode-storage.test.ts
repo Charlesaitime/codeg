@@ -5,14 +5,17 @@ import {
   loadSectionCollapsed,
   loadSectionOrder,
   loadShowRecent,
+  loadShowWorktrees,
   moveSectionInOrder,
   normalizeSectionOrder,
   saveSectionOrder,
   saveShowRecent,
+  saveShowWorktrees,
 } from "./sidebar-view-mode-storage"
 
 const SECTION_ORDER_KEY = "workspace:sidebar-section-order"
 const SHOW_RECENT_KEY = "workspace:sidebar-show-recent"
+const SHOW_WORKTREES_KEY = "workspace:sidebar-show-worktrees"
 
 describe("normalizeSectionOrder", () => {
   it("passes a complete order through unchanged", () => {
@@ -141,5 +144,40 @@ describe("loadSectionCollapsed", () => {
       JSON.stringify({ recent: true, chats: false, bogus: 1 })
     )
     expect(loadSectionCollapsed()).toEqual({ recent: true, chats: false })
+  })
+})
+
+describe("loadShowWorktrees", () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  /// The flat layout is the default: each session row names its own branch, so
+  /// splitting every worktree into its own header + indent level buys nothing
+  /// and pushes the sessions themselves down the list. Pinned as a test because
+  /// a silent flip back to sub-groups is invisible to every other assertion.
+  it("defaults to the flat layout when nothing is stored", () => {
+    expect(loadShowWorktrees()).toBe(false)
+  })
+
+  it("only turns sub-groups on for an explicitly stored true", () => {
+    // Every value round-trips, and anything unrecognised falls back to the
+    // default rather than being coerced truthy.
+    for (const [stored, expected] of [
+      ["true", true],
+      ["false", false],
+      ["", false],
+      ["yes", false],
+    ] as const) {
+      localStorage.setItem(SHOW_WORKTREES_KEY, stored)
+      expect(loadShowWorktrees()).toBe(expected)
+    }
+  })
+
+  it("round-trips what it saved", () => {
+    saveShowWorktrees(true)
+    expect(loadShowWorktrees()).toBe(true)
+    saveShowWorktrees(false)
+    expect(loadShowWorktrees()).toBe(false)
   })
 })
