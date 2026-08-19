@@ -63,6 +63,7 @@ import { useScrollbarSafeDismiss } from "@/hooks/use-scrollbar-safe-dismiss"
 import { useGitQuickActions } from "@/hooks/use-git-quick-actions"
 import { useImeGuard } from "@/hooks/use-ime-guard"
 import type { FolderDetail, GitBranchList } from "@/lib/types"
+import { claudeWorktreeNaming } from "@/lib/worktree-naming"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { useTabActions } from "@/contexts/tab-context"
 import { useWorkbenchRoute } from "@/contexts/workbench-route-context"
@@ -352,17 +353,13 @@ export function BranchDropdown({ folder, isChatMode }: BranchDropdownProps) {
   }
 
   function handleOpenWorktreeDialog() {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-    let random = ""
-    for (let i = 0; i < 6; i++) {
-      random += chars[Math.floor(Math.random() * chars.length)]
-    }
-    const folderName = folderPath.split("/").filter(Boolean).pop() ?? "project"
-    const currentBranch = branch ?? "main"
-    const defaultBranch = `cv-${currentBranch}-${random}`
-    const parentDir = folderPath.substring(0, folderPath.lastIndexOf("/"))
-    setWorktreeBranchName(defaultBranch)
-    setWorktreePath(`${parentDir}/${folderName}-${currentBranch}-${random}`)
+    // Claude-compatible defaults: the worktree goes under the repository's own
+    // `.claude/worktrees`, on a `claude/`-prefixed branch whose name IS the
+    // directory name. Seeded from the current branch because that is what the
+    // dialog says it branches from; the user can overwrite both fields.
+    const naming = claudeWorktreeNaming(folderPath, branch ?? "main")
+    setWorktreeBranchName(naming.branch)
+    setWorktreePath(naming.path)
     setWorktreeOpen(true)
   }
 

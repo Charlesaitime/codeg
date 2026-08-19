@@ -22,6 +22,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 use tokio::time::MissedTickBehavior;
 
+use crate::worktree_naming::{claude_worktree_naming, claude_worktrees_root};
 use crate::acp::manager::ConnectionManager;
 use crate::acp::types::{AcpEvent, EventEnvelope, PromptInputBlock};
 use crate::acp::InternalEventBus;
@@ -604,26 +605,28 @@ impl AutomationEngine {
 
         match auto.isolation {
             IsolationMode::WorktreePerRun => {
-                // Fresh isolated worktree per run; names carry the automation +
-                // run id so `git worktree list` / the branch tree groups them.
-                let branch = format!("automation/{}/run-{}", auto.id, run_id);
-                let dir = format!(
-                    "{}-automation-{}-run-{}",
-                    basename(&root.path),
-                    auto.id,
-                    run_id
-                );
-                let mut wt_path = sibling_path(&root.path, &dir);
+                // Fresh isolated worktree per run, on the Claude-compatible
+                // layout (`claude/auto-<id>-run-<n>-<hash6>` at
+                // `.claude/worktrees/<same>`) so Claude Code can pick a run's
+                // worktree up. The automation + run id stay in the slug, which
+                // is what groups them in `git worktree list` / the branch tree.
+                let source = format!("auto-{}-run-{}", auto.id, run_id);
+                let naming = claude_worktree_naming(&source);
+                let mut wt_path = claude_worktree_path(&root.path, &naming.dir_name);
 
-                // Retry once with a short suffix if a leftover collides (a prior
-                // attempt for this run id that failed before cleanup).
-                if let Err(e) =
-                    git_worktree_add(root.path.clone(), branch.clone(), wt_path.clone(), None).await
+                // Retry once with a freshly minted name if a leftover collides
+                // (a prior attempt for this run id that failed before cleanup).
+                if let Err(e) = git_worktree_add(
+                    root.path.clone(),
+                    naming.branch.clone(),
+                    wt_path.clone(),
+                    None,
+                )
+                .await
                 {
-                    let suffix = short_suffix(run_id);
-                    let branch2 = format!("{branch}-{suffix}");
-                    wt_path = sibling_path(&root.path, &format!("{dir}-{suffix}"));
-                    git_worktree_add(root.path.clone(), branch2, wt_path.clone(), None)
+                    let retry = claude_worktree_naming(&source);
+                    wt_path = claude_worktree_path(&root.path, &retry.dir_name);
+                    git_worktree_add(root.path.clone(), retry.branch, wt_path.clone(), None)
                         .await
                         .map_err(|_| format!("worktree add failed: {e}"))?;
                 }
@@ -1052,24 +1055,14 @@ fn first_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-fn basename(path: &str) -> &str {
-    path.trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(path)
-}
-
-fn sibling_path(root_path: &str, name: &str) -> String {
-    let trimmed = root_path.trim_end_matches('/');
-    match trimmed.rfind('/') {
-        Some(idx) => format!("{}/{}", &trimmed[..idx], name),
-        None => name.to_string(),
-    }
-}
-
-fn short_suffix(run_id: i32) -> String {
-    // Deterministic, leftover-avoiding suffix (no RNG needed at this layer).
-    format!("r{run_id}b")
+/// `<repo>/.claude/worktrees/<dir_name>` as a string. Automations have no
+/// per-folder worktree-root setting of their own (unlike to-do tasks), so the
+/// Claude layout is used unconditionally here.
+fn claude_worktree_path(root_path: &str, dir_name: &str) -> String {
+    claude_worktrees_root(root_path)
+        .join(dir_name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -1085,11 +1078,26 @@ mod tests {
         assert_eq!(classify_stop_reason("").1, "failed");
     }
 
+    /// A per-run worktree lands INSIDE the repository, on the layout Claude
+    /// Code also uses — not next to the project folder as it did before.
     #[test]
-    fn worktree_names_carry_ids() {
-        assert_eq!(basename("/home/me/repo"), "repo");
-        assert_eq!(basename("/home/me/repo/"), "repo");
-        assert_eq!(sibling_path("/home/me/repo", "repo-automation-3-run-7"), "/home/me/repo-automation-3-run-7");
+    fn a_run_worktree_lands_in_the_repos_claude_directory() {
+        assert_eq!(
+            claude_worktree_path("/home/me/repo", "auto-3-run-7-a3f91c"),
+            Path::new("/home/me/repo/.claude/worktrees")
+                .join("auto-3-run-7-a3f91c")
+                .to_string_lossy()
+                .into_owned()
+        );
+    }
+
+    /// The run's identity survives into both halves of the name, which is what
+    /// makes a stray worktree traceable back to the automation that made it.
+    #[test]
+    fn a_run_worktree_name_carries_the_automation_and_run_ids() {
+        let naming = claude_worktree_naming("auto-3-run-7");
+        assert!(naming.dir_name.starts_with("auto-3-run-7-"), "{naming:?}");
+        assert_eq!(naming.branch, format!("claude/{}", naming.dir_name));
     }
 
     #[test]

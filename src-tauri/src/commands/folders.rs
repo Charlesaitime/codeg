@@ -2044,6 +2044,14 @@ pub async fn git_worktree_add(
     if !output.status.success() {
         return Err(git_command_error("worktree add", &output.stderr));
     }
+    // Worktrees now live INSIDE the repository, so git would report each one as
+    // an untracked directory of its own parent. Excluding them is what keeps
+    // `git status` (and Codeg's changes panel) readable. Fail-open and only
+    // logged: repository hygiene must never turn a working worktree into an
+    // error.
+    if let Err(e) = crate::worktree_naming::ensure_worktrees_excluded(&path).await {
+        tracing::warn!("could not exclude the worktrees directory in {path}: {e}");
+    }
     Ok(())
 }
 

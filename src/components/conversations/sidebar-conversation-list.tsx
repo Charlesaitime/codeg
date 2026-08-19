@@ -756,6 +756,7 @@ export function SidebarConversationList({
   useZoomLevel()
   const folders = useAppWorkspaceStore((s) => s.folders)
   const allFolders = useAppWorkspaceStore((s) => s.allFolders)
+  const folderBranches = useAppWorkspaceStore((s) => s.branches)
   const conversations = useAppWorkspaceStore((s) => s.conversations)
   const loading = useAppWorkspaceStore((s) => s.conversationsLoading)
   const error = useAppWorkspaceStore((s) => s.conversationsError)
@@ -1130,6 +1131,39 @@ export function SidebarConversationList({
   // count / theme and renders under its own header. The raw `childToParent`
   // above is still used to know which folders ARE worktree children (nesting
   // order, indent, grip gating). Off → identical to the historical behavior.
+  /**
+   * Branch chip content per folder id: what each conversation row shows to the
+   * right of its title.
+   *
+   * Two different sources, because the two kinds of folder record their branch
+   * in different places:
+   *
+   * - A REPOSITORY folder has a live, polled `git_branch` (mirrored into the
+   *   store's `branches` map), so its sessions follow the checkout as it
+   *   changes — usually `main`.
+   * - A WORKTREE folder's `git_branch` column is never written by the folder
+   *   flow; the branch it was created on is seeded into its ALIAS instead (see
+   *   `worktreeHeaderAlias`). The chip therefore reads the same value the
+   *   worktree sub-group header does, which keeps one identity for a worktree
+   *   across both views. The caveat that buys: renaming a worktree folder
+   *   overwrites that alias, and the chip then shows the rename — the same
+   *   thing the header has always shown.
+   *
+   * A folder with neither (a plain non-repo directory) maps to nothing and its
+   * rows render no chip at all.
+   */
+  const branchByFolder = useMemo(() => {
+    const out = new Map<number, { label: string; isWorktree: boolean }>()
+    for (const f of allFolders) {
+      const isWorktree = f.parent_id != null
+      const label = isWorktree
+        ? worktreeHeaderAlias(f.alias, f.git_branch)
+        : (folderBranches.get(f.id) ?? f.git_branch ?? null)
+      if (label) out.set(f.id, { label, isWorktree })
+    }
+    return out
+  }, [allFolders, folderBranches])
+
   const displayChildToParent = useMemo(
     () => (showWorktrees ? EMPTY_CHILD_TO_PARENT : childToParent),
     [showWorktrees, childToParent]
@@ -2447,6 +2481,10 @@ export function SidebarConversationList({
         hasChildren={conv.child_count > 0}
         expanded={conversationExpanded.has(conv.id)}
         onToggleExpand={toggleConversation}
+        branchLabel={branchByFolder.get(conv.folder_id)?.label ?? null}
+        isWorktreeBranch={
+          branchByFolder.get(conv.folder_id)?.isWorktree ?? false
+        }
       />
     )
   }

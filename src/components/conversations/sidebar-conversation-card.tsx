@@ -12,6 +12,7 @@ import {
   PinOff,
   CheckCircle2,
   FolderX,
+  GitBranch,
   Info,
   ChevronRight,
 } from "lucide-react"
@@ -123,6 +124,22 @@ interface SidebarConversationCardProps {
   expanded?: boolean
   /** Toggle this conversation's sub-session subtree (lazily loads on expand). */
   onToggleExpand?: (id: number) => void
+  /**
+   * Branch this conversation's working directory is on — the worktree's branch
+   * for a worktree session, the repository's own checked-out branch (usually
+   * `main`) otherwise. `null` for a non-repo folder, which shows no chip.
+   *
+   * A plain string, not an object, so the memo above bails out on every render
+   * where the branch did not actually change.
+   */
+  branchLabel?: string | null
+  /**
+   * Whether {@link branchLabel} names a WORKTREE's branch rather than the
+   * repository's own. Only the chip's colour depends on it: worktree sessions
+   * read as the isolated ones at a glance, which is the entire point of showing
+   * the branch in a flat list.
+   */
+  isWorktreeBranch?: boolean
 }
 
 export const SidebarConversationCard = memo(function SidebarConversationCard({
@@ -141,6 +158,8 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
   hasChildren = false,
   expanded = false,
   onToggleExpand,
+  branchLabel = null,
+  isWorktreeBranch = false,
 }: SidebarConversationCardProps) {
   const t = useTranslations("Folder.conversationCard")
   const ime = useImeGuard()
@@ -317,6 +336,37 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                   {formatConversationTitle(conversation.title) ||
                     t("untitledConversation")}
                 </span>
+                {/* Which checkout this session runs in. It sits between the
+                    title and the right slot rather than inside it, and stays
+                    visible on hover: the right slot swaps its contents for the
+                    pin / done buttons, and the branch is the row's IDENTITY —
+                    blinking out from under the cursor would make it unreadable
+                    exactly when the user is pointing at the row. The title
+                    yields width first (min-w-0 flex-1 above), the chip only
+                    down to its own max. */}
+                {branchLabel ? (
+                  <span
+                    className={cn(
+                      "inline-flex h-[0.9375rem] max-w-[40%] shrink-0 items-center gap-[0.1875rem]",
+                      "rounded-[0.3125rem] px-[0.25rem]",
+                      "font-mono text-[0.625rem] font-medium leading-none",
+                      // Worktree sessions take the accent (the same primary/10
+                      // pairing the shortcut badges use, ≈14:1 light / 11:1
+                      // dark); the repository's own branch stays muted so the
+                      // isolated ones are what stand out.
+                      isWorktreeBranch
+                        ? "bg-primary/10 text-primary"
+                        : "bg-muted text-muted-foreground"
+                    )}
+                    title={tSidebar("branchBadge", { branch: branchLabel })}
+                  >
+                    <GitBranch
+                      className="h-[0.5625rem] w-[0.5625rem] shrink-0"
+                      aria-hidden
+                    />
+                    <span className="truncate">{branchLabel}</span>
+                  </span>
+                ) : null}
                 {/* Re-parented out of a removed worktree: history loads fine,
                     but "continue" may need a fresh session (the agent's files
                     were keyed to the old path). */}

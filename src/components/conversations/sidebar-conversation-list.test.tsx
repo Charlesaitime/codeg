@@ -866,10 +866,51 @@ describe("SidebarConversationList — worktree grouping (Show worktrees)", () =>
     expect(text).toContain("conv-11")
     expect(text).toContain("conv-12")
     expect(text).toContain("conv-21")
-    // No worktree header → no branch label; no root sub-group (probes.root===0,
-    // the unambiguous check — the "root" label is a generic word to match on).
-    expect(text).not.toContain("feature-x")
+    // No worktree header (folderHeaderIds() === [1] above) and no root
+    // sub-group — probes.root is the unambiguous check, since "root" is a
+    // generic word to match text on.
     expect(probes.root).toBe(0)
+    // The branch does still appear, on the merged row's own chip: flattening
+    // the worktree away is what makes the per-row branch load-bearing, since
+    // it is now the ONLY thing saying conv-21 runs in a different checkout.
+    expect(
+      document.querySelectorAll('[title="Branch: feature-x"]')
+    ).toHaveLength(1)
+  })
+
+  /**
+   * The chip is the whole point of the flat view: with worktree headers off,
+   * it is the only signal separating an isolated session from one running in
+   * the repository itself. Two things have to hold — the right BRANCH on each
+   * row, and a visible difference between the two kinds — so a glance down the
+   * list tells them apart. Asserted as an invariant over both rows rather than
+   * one anchor case, so a regression that collapses them to one style fails.
+   */
+  it("labels every row with its own checkout and distinguishes the two kinds", () => {
+    // The repo's live branch comes from the polled `branches` map; the
+    // worktree's comes from its folder row (git_branch / alias).
+    useAppWorkspaceStore.setState({ branches: new Map([[1, "main"]]) })
+    render(wtTree(false))
+
+    const chipFor = (branch: string) =>
+      document.querySelector(`[title="Branch: ${branch}"]`)
+
+    const repoChip = chipFor("main")
+    const worktreeChip = chipFor("feature-x")
+    expect(repoChip).not.toBeNull()
+    expect(worktreeChip).not.toBeNull()
+
+    // Both of the repo's own sessions carry the repo branch; the worktree's
+    // single session carries the worktree branch. No row is left unlabeled.
+    expect(document.querySelectorAll('[title="Branch: main"]')).toHaveLength(2)
+    expect(
+      document.querySelectorAll('[title="Branch: feature-x"]')
+    ).toHaveLength(1)
+
+    // Distinguishable, not merely both present.
+    expect(repoChip?.className).not.toBe(worktreeChip?.className)
+    expect(worktreeChip?.className).toContain("text-primary")
+    expect(repoChip?.className).toContain("text-muted-foreground")
   })
 
   it("splits the repo into a container + root sub-group + worktree sub-group when on", () => {
