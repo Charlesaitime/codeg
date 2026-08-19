@@ -1741,6 +1741,7 @@
     "conversationCard": {
       "untitledConversation": "未命名会话",
       "newConversation": "新建会话",
+      "attachToCurrentSession": "添加到会话",
       "rename": "重命名",
       "status": "状态",
       "delete": "删除",
@@ -1823,6 +1824,16 @@
         "cacheRead": "缓存读取",
         "cacheWrite": "缓存写入",
         "total": "总计"
+      },
+      "quickActions": {
+        "title": "快捷操作",
+        "groups": {
+          "workspace": "工作区",
+          "sessions": "会话",
+          "automation": "自动化与待办",
+          "more": "更多"
+        },
+        "showPet": "显示宠物"
       }
     },
     "auxPanel": {
@@ -2687,6 +2698,7 @@
         "slashCommands": "斜杠命令",
         "slashSearchPlaceholder": "搜索命令...",
         "slashSearchEmpty": "没有匹配的命令",
+        "slashLoading": "正在加载命令…",
         "experts": "专家",
         "office": "日常办公",
         "research": "科学研究",

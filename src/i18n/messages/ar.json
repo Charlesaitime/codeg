@@ -1741,6 +1741,7 @@
     "conversationCard": {
       "untitledConversation": "محادثة بدون عنوان",
       "newConversation": "محادثة جديدة",
+      "attachToCurrentSession": "إضافة إلى الجلسة",
       "rename": "إعادة تسمية",
       "status": "الحالة",
       "delete": "حذف",
@@ -1823,6 +1824,16 @@
         "cacheRead": "قراءة الكاش",
         "cacheWrite": "كتابة الكاش",
         "total": "الإجمالي"
+      },
+      "quickActions": {
+        "title": "إجراءات سريعة",
+        "groups": {
+          "workspace": "مساحة العمل",
+          "sessions": "الجلسات",
+          "automation": "الأتمتة والمهام",
+          "more": "المزيد"
+        },
+        "showPet": "إظهار الحيوان الأليف"
       }
     },
     "auxPanel": {
@@ -2685,6 +2696,7 @@
         "slashCommands": "أوامر الشرطة المائلة",
         "slashSearchPlaceholder": "البحث عن الأوامر...",
         "slashSearchEmpty": "لا توجد أوامر مطابقة",
+        "slashLoading": "جارٍ تحميل الأوامر…",
         "experts": "الخبراء",
         "office": "الأعمال المكتبية",
         "research": "البحث العلمي",
