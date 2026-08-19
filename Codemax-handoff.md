@@ -26,9 +26,14 @@
      独立开发环境，这是该改动最该担心的一点。
   2. **点选卡片可触发** — 新描述随 codeg-mcp 重建后生效（新 companion 进程晚于构建时间即为证据），
      Grok 调用的是 codeg-mcp 的 `ask_user_question` 而非 x.ai 原生那条，所以工具描述是有效抓手。
+- **已同步上游**（2026-08-19）：本地 main 合入 `origin/main` 的 2188 个 commit，版本 0.26.1 → **0.26.2**。
+  零冲突，本地 11 个 commit 全部保留（逐条验过既在历史里、也在文件里）。
+  备份 ref：`backup/pre-upstream-sync-20260819` / tag `backup-pre-upstream-sync`。
 - **下一步**：
   - 可选：后端补写 worktree 文件夹的 `git_branch` 列，让 chip 不再依赖 alias。
-  - 本地 main 目前 ahead origin 10 个 commit，尚未 push。
+  - 留意与上游相邻功能是否重复：上游新增了「管理对话弹窗按分支筛选并在每行显示分支」，
+    与侧栏 chip 是两个界面、目前不打架，但概念相近。
+  - 本地 main 目前 ahead origin 12 个 commit，尚未 push。
 
 ### 踩过的坑（累积，不删旧条目）
 
@@ -57,6 +62,12 @@
 - [2026-08-19] **桌面端「闪退」多半不是崩溃**。日志最后一行是 `[killed]`、0 个 panic：
   `pnpm tauri dev` 若由 agent 会话的后台任务拉起，会话销毁就连带被杀。**要长期稳定运行，
   必须由用户自己的终端跑**。另外 dev server 被挤到 3001 时（3000 被占）Tauri 会直接启动失败。
+- [2026-08-19] **合并大分叉前先做虚拟合并探路**：`git merge-tree --write-tree A B` 只算不写工作区，
+  exit=0 即无冲突。配合「逐文件统计上游改过几次」能在动手前就判断风险，比直接合了再回滚便宜得多。
+  另外 11 个 commit 对 2188 个用 merge 而非 rebase——rebase 要解 11 遍冲突且改写历史。
+- [2026-08-19] **合并后「提交还在」不等于「代码还在」**：上游若改过同一文件，合并结果可能采用它那侧。
+  验证要同时查两层：`git merge-base --is-ancestor <sha> HEAD`（提交在历史里）+ grep 关键标识
+  （代码在文件里）。本次 13 项功能标识逐条 grep 过。
 - [2026-08-19] **`include_str!` 的资源改了不会自动重编**：`tool_schema.json` 编进二进制，
   而 `tauri dev` 的监视器只盯 `.rs`，改 json 后 app 仍跑旧描述，白试两轮。
   判断办法：`strings target/debug/codeg-mcp | grep <特征串>`。另外主程序 `codeg` 里查不到
@@ -126,6 +137,7 @@
 
 | 时间 | 一句话摘要 | 涉及模块/文件 | 详情锚点 |
 |------|-----------|--------------|---------|
+| 2026-08-19 | 同步上游 0.26.2（2188 commit，零冲突，本地 11 个全保留） | 全仓 102 文件 | [#h20260819-3](#h20260819-3) |
 | 2026-08-19 | 侧栏平铺+分支标定稿、拖拽下限动态化、ask 卡片可触发 | sidebar-context, window-chrome, tool_schema | [#h20260819-2](#h20260819-2) |
 | 2026-08-19 | Claude 兼容 worktree 布局 + 侧栏分支标，合并到 main | worktree_naming, work_task, automation, sidebar | [#h20260819-1](#h20260819-1) |
 
@@ -188,3 +200,30 @@ tooltip 保留完整分支名。
 两种 feature 的 clippy `-D warnings` 均干净。
 
 **遗留**：Grok 若走它自己的原生 `_x.ai/ask_user_question`，本次描述改动影响不到（描述在 x.ai 侧）。
+
+### <a name="h20260819-3"></a>2026-08-19 — 同步上游 0.26.2
+
+**诉求**：保留本地 11 个 commit，同时拿到上游最新修复与功能。
+
+**分叉规模**：本地领先 11、上游领先 **2188**，merge base 是 `ea5177ea # Release version 0.26.1`。
+远端只有 `origin`（`Charlesaitime/codeg`），没有单独的 upstream。
+
+**动手前的探路**（关键，别跳过）：`git merge-tree --write-tree main origin/main` 只算不写工作区，
+exit=0 → 无冲突。再逐文件统计上游改过几次，确认重叠很小：
+`sidebar-conversation-card.tsx` 2 次、`companion.rs` / `tool_schema.json` 各 1 次、
+10 个 i18n 各 3 次（均为新增键），其余 20 个文件 0 次。
+
+**方式**：`merge` 而非 `rebase`——11 个 commit 去 rebase 到 2188 个之上要解 11 遍冲突且改写历史。
+合并前打了备份 ref `backup/pre-upstream-sync-20260819` 与 tag `backup-pre-upstream-sync`。
+
+**验证**（合并后逐项）：
+- `pnpm install`（上游新增 `unified` / `unist-util-visit` 两个依赖）
+- `npx tsc --noEmit` 干净
+- `pnpm test` **4374 passed / 319 files**（较合并前 +147 条 / +5 文件，均来自上游）
+- `cargo clippy --no-default-features --lib -- -D warnings` 干净
+- 11 个本地 commit 逐条 `merge-base --is-ancestor` 确认在历史里
+- **13 项功能标识逐条 grep 确认仍在文件里**（提交在历史里 ≠ 代码没被上游那侧覆盖）
+
+**上游带来的相邻功能**（概念相近，目前不冲突）：管理对话弹窗按分支筛选并在每行显示分支、
+worktree 文件夹按「分支 + 目录」命名、任务 worktree 目录可配置、Qoder CLI 内置 agent、
+状态栏快捷操作菜单。
