@@ -35,6 +35,25 @@ export const LEFT_CHROME_CLUSTER = 80
 export const RIGHT_CHROME_CLUSTER = 116
 
 /**
+ * The sidebar header's OWN trailing cluster: locate-active + view-options (two
+ * `h-6 w-6` icon buttons, a `gap-0.5` between them) plus the header's `pr-2`.
+ * rem-sized, so it scales with zoom exactly like {@link LEFT_CHROME_CLUSTER}.
+ */
+export const SIDEBAR_TRAILING_CLUSTER = 58
+
+/**
+ * How narrow the sidebar may get before its CONTENT stops being worth showing,
+ * independent of what the header needs. A session row still has to fit an agent
+ * icon, a readable stretch of title, a branch chip and a timestamp; below this
+ * the title truncates to a few characters and the list answers nothing.
+ *
+ * Not zoom-scaled: zoom already enlarges the text inside the rows, so the
+ * number of CHARACTERS visible at a given pixel width is roughly what changes,
+ * and the "worth showing" threshold tracks pixels rather than rem.
+ */
+export const SIDEBAR_CONTENT_MIN = 200
+
+/**
  * Scale a DOM button-cluster width by the app's rem-based zoom.
  *
  * The app "zoom" scales the root font-size (`documentElement.style.fontSize =
@@ -61,6 +80,26 @@ export function leftChromeReserve(macInset: boolean, zoom = 100): number {
     (macInset ? MAC_TRAFFIC_LIGHT_INSET : 0) +
     scaleCluster(LEFT_CHROME_CLUSTER, zoom)
   )
+}
+
+/**
+ * The narrowest the left sidebar may be dragged.
+ *
+ * Derived rather than a constant because both terms move: the left overlay
+ * carries the macOS traffic-light inset only on desktop macOS, and both button
+ * clusters grow with the app's zoom. A fixed floor that clears the header at
+ * 100% zoom silently overlaps the buttons at 150% — which is exactly the bug
+ * the "one place defines the reservation" rule at the top of this file exists
+ * to prevent, applied to the resize limit instead of the padding.
+ *
+ * The header's need and the content's need are independent lower bounds, so the
+ * answer is whichever binds.
+ */
+export function sidebarMinWidth(macInset: boolean, zoom = 100): number {
+  const headerNeeds =
+    leftChromeReserve(macInset, zoom) +
+    scaleCluster(SIDEBAR_TRAILING_CLUSTER, zoom)
+  return Math.max(headerNeeds, SIDEBAR_CONTENT_MIN)
 }
 
 /**
