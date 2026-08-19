@@ -907,10 +907,20 @@ describe("SidebarConversationList — worktree grouping (Show worktrees)", () =>
       document.querySelectorAll('[title="Branch: feature-x"]')
     ).toHaveLength(1)
 
-    // Distinguishable, not merely both present.
+    // Distinguishable, and distinguishable by something that actually SHOWS.
+    // The first cut differed only in text colour (`text-primary` vs
+    // `text-muted-foreground`) — invisible in practice, because this theme is
+    // monochrome and both tokens land on near-neutral greys at 10px. The
+    // difference now carries on the filled ground and the weight, so these
+    // assert those two properties rather than the colour tokens.
     expect(repoChip?.className).not.toBe(worktreeChip?.className)
-    expect(worktreeChip?.className).toContain("text-primary")
+    // Worktree: filled ground, full-contrast text, heavier.
+    expect(worktreeChip?.className).toContain("bg-muted")
+    expect(worktreeChip?.className).toContain("font-semibold")
+    // Repository's own branch: no ground at all, muted, lighter.
+    expect(repoChip?.className).not.toContain("bg-")
     expect(repoChip?.className).toContain("text-muted-foreground")
+    expect(repoChip?.className).not.toContain("font-semibold")
   })
 
   it("splits the repo into a container + root sub-group + worktree sub-group when on", () => {

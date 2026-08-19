@@ -349,14 +349,20 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                     className={cn(
                       "inline-flex h-[0.9375rem] max-w-[40%] shrink-0 items-center gap-[0.1875rem]",
                       "rounded-[0.3125rem] px-[0.25rem]",
-                      "font-mono text-[0.625rem] font-medium leading-none",
-                      // Worktree sessions take the accent (the same primary/10
-                      // pairing the shortcut badges use, ≈14:1 light / 11:1
-                      // dark); the repository's own branch stays muted so the
-                      // isolated ones are what stand out.
+                      "font-mono text-[0.625rem] leading-none",
+                      // The two states are told apart by WEIGHT and by whether
+                      // the chip has a filled ground at all — not by hue. This
+                      // theme is deliberately monochrome (`--primary` and
+                      // `--accent` both carry chroma 0), so a colour-only
+                      // distinction is invisible: two chips differing solely in
+                      // text colour read as identical at 10px. A worktree gets
+                      // the filled, full-contrast chip; the repository's own
+                      // branch drops the ground entirely and stays muted, so
+                      // the isolated sessions are the ones that register when
+                      // scanning the list.
                       isWorktreeBranch
-                        ? "bg-primary/10 text-primary"
-                        : "bg-muted text-muted-foreground"
+                        ? "bg-muted font-semibold text-foreground"
+                        : "font-medium text-muted-foreground"
                     )}
                     title={tSidebar("branchBadge", { branch: branchLabel })}
                   >
