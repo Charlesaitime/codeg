@@ -26,6 +26,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::MissedTickBehavior;
 
+use crate::worktree_naming::{claude_worktree_naming, claude_worktrees_root, dir_name_for_branch};
 use crate::acp::manager::ConnectionManager;
 use crate::acp::types::{AcpEvent, EventEnvelope, PromptCapabilitiesInfo, PromptInputBlock};
 use crate::acp::work_task_tools::{TaskReportAck, WorkTaskToolAccess};
@@ -1257,34 +1258,43 @@ impl TaskEngine {
             .await
             .map_err(|e| e.to_string())?;
 
-        let branch = format!("task/{}", task.id);
-        let dir = format!("{}-task-{}", basename(&root.path), task.id);
+        // Claude-compatible naming (`claude/task-<id>-<hash6>` checked out at
+        // `.claude/worktrees/task-<id>-<hash6>`), so Claude Code can pick this
+        // worktree up as one of its own. The task id stays in the slug — it is
+        // what identifies the worktree to a human reading `git worktree list`.
+        let naming = claude_worktree_naming(&format!("task-{}", task.id));
         // A configured root that does not exist yet (the folder's first task)
         // needs no `mkdir`: `git worktree add` creates the leading directories
         // along with the checkout.
-        let mut wt_path = worktree_path_in(&root.path, settings.worktree_root.as_deref(), &dir);
-        let mut branch_used = branch.clone();
+        let mut wt_path = worktree_path_in(
+            &root.path,
+            settings.worktree_root.as_deref(),
+            &naming.dir_name,
+        );
+        let mut branch_used = naming.branch.clone();
 
         if let Err(e) = git_worktree_add(
             root.path.clone(),
-            branch.clone(),
+            naming.branch.clone(),
             wt_path.clone(),
             Some(base_sha.clone()),
         )
         .await
         {
             // A leftover from a prior attempt may collide — retry once with a
-            // generation-scoped suffix.
-            let suffix = format!("r{}b", task.run_seq);
-            branch_used = format!("{branch}-{suffix}");
+            // freshly minted name. A new random suffix (rather than an extra
+            // suffix on the old one) keeps the retry's directory and branch in
+            // exactly the same shape as a first attempt's.
+            let retry = claude_worktree_naming(&format!("task-{}", task.id));
+            branch_used = retry.branch.clone();
             wt_path = worktree_path_in(
                 &root.path,
                 settings.worktree_root.as_deref(),
-                &format!("{dir}-{suffix}"),
+                &retry.dir_name,
             );
             git_worktree_add(
                 root.path.clone(),
-                branch_used.clone(),
+                retry.branch,
                 wt_path.clone(),
                 Some(base_sha.clone()),
             )
@@ -1343,10 +1353,14 @@ impl TaskEngine {
             None => None,
         };
         let path = recorded.unwrap_or_else(|| {
+            // No folder row to go by — recover the directory from the branch
+            // itself. `claude/<name>` and `.claude/worktrees/<name>` are two
+            // halves of one identity, so this lands on the path the worktree
+            // would have had rather than inventing a second one for it.
             worktree_path_in(
                 &root.path,
                 settings.worktree_root.as_deref(),
-                &format!("{}-task-{}", basename(&root.path), task.id),
+                &dir_name_for_branch(branch),
             )
         });
         if Path::new(&path).exists() {
@@ -4185,39 +4199,11 @@ pub(crate) fn conversation_title_for_task(task_title: &str) -> String {
     first_chars(task_title.trim(), CONVERSATION_TITLE_MAX_CHARS)
 }
 
-/// The project folder's own name — what a task worktree directory is named
-/// after. `Path` semantics rather than a `/` split, so `C:\src\repo` yields
-/// `repo` too.
-///
-/// The answer is always RELATIVE, empty included: a path with no final
-/// component (a filesystem root, or one ending in `..`) must not fall back to
-/// the path itself, because the name is JOINED onto the configured worktree
-/// root — and an absolute one replaces that root instead of landing under it.
-fn basename(path: &str) -> &str {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-}
-
-/// `name` placed next to the project folder — where task worktrees live when
-/// the folder configures no root of its own. A project folder with no parent
-/// (a drive or filesystem root) falls back to the bare name, which git then
-/// resolves against the repository itself.
-fn sibling_path(root_path: &str, name: &str) -> String {
-    match Path::new(root_path).parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            parent.join(name).to_string_lossy().into_owned()
-        }
-        _ => name.to_string(),
-    }
-}
-
 /// Where the task worktree directory `name` goes for a project at
-/// `root_path`. `worktree_root` is the folder setting: blank (or absent) keeps
-/// the historical layout — right next to the project folder — and any other
-/// value becomes the directory every new worktree of that folder is created
-/// in. A typed path is taken at face value in the two ways a user expects: `~`
+/// `root_path`. `worktree_root` is the folder setting: blank (or absent) means
+/// the Claude-compatible layout inside the repository
+/// (`<repo>/.claude/worktrees`), and any other value becomes the directory
+/// every new worktree of that folder is created in. A typed path is taken at face value in the two ways a user expects: `~`
 /// is the home directory, and something relative hangs off the project folder.
 fn worktree_path_in(root_path: &str, worktree_root: Option<&str>, name: &str) -> String {
     worktree_path_in_home(root_path, worktree_root, name, dirs::home_dir().as_deref())
@@ -4233,7 +4219,14 @@ fn worktree_path_in_home(
     home: Option<&Path>,
 ) -> String {
     let Some(configured) = worktree_root.map(str::trim).filter(|r| !r.is_empty()) else {
-        return sibling_path(root_path, name);
+        // Unset means the Claude-compatible layout INSIDE the repository, not
+        // the historical sibling directory: it is the one location Claude Code
+        // also looks in. Worktrees created before this change keep their old
+        // path — the folder row records it, and nothing re-derives it.
+        return claude_worktrees_root(root_path)
+            .join(name)
+            .to_string_lossy()
+            .into_owned();
     };
     let base = expand_home(configured, home);
     let base = if base.is_absolute() {
@@ -4305,20 +4298,15 @@ mod tests {
     #[cfg(not(windows))]
     const ABS_PREFIX: &str = "";
 
+    /// A task worktree's name carries the task id in BOTH halves, and the two
+    /// halves stay in lockstep — that pairing is what lets the launch recover
+    /// a worktree's directory from its branch alone.
     #[test]
     fn worktree_names_carry_ids() {
-        assert_eq!(basename("/home/me/repo"), "repo");
-        assert_eq!(basename("/home/me/repo/"), "repo");
-        assert_eq!(
-            sibling_path("/home/me/repo", "repo-task-7"),
-            Path::new("/home/me")
-                .join("repo-task-7")
-                .to_string_lossy()
-                .into_owned()
-        );
-        // No parent to be a sibling of: the bare name, which git resolves
-        // against the repository it runs in.
-        assert_eq!(sibling_path("repo", "repo-task-7"), "repo-task-7");
+        let naming = claude_worktree_naming("task-7");
+        assert!(naming.dir_name.starts_with("task-7-"), "{naming:?}");
+        assert_eq!(naming.branch, format!("claude/{}", naming.dir_name));
+        assert_eq!(dir_name_for_branch(&naming.branch), naming.dir_name);
     }
 
     /// The derived directory name is joined ONTO the configured root, so it
@@ -4326,37 +4314,45 @@ mod tests {
     /// to borrow: a filesystem root, and anything ending in `..`. An absolute
     /// name would replace the configured root instead of landing under it —
     /// silently putting the worktree somewhere the user never chose.
+    /// The directory name is joined ONTO the configured root, so it has to stay
+    /// relative whatever the project path looks like — a filesystem root, or
+    /// something ending in `..`. An absolute name would REPLACE the configured
+    /// root instead of landing under it, silently putting the worktree
+    /// somewhere the user never chose. Names now come from `slugify`, which
+    /// cannot emit a separator at all; this pins that guarantee.
     #[test]
-    fn a_project_without_a_name_still_lands_under_the_configured_root() {
+    fn a_derived_name_stays_relative_to_the_configured_root() {
         let trees = format!("{ABS_PREFIX}/var/worktrees");
-        for root in [format!("{ABS_PREFIX}/"), format!("{ABS_PREFIX}/home/me/..")] {
-            let dir = format!("{}-task-7", basename(&root));
+        for source in ["task-7", "/", "../../etc", "C:\\Windows"] {
+            let dir = claude_worktree_naming(source).dir_name;
             assert!(
-                !Path::new(&dir).is_absolute(),
-                "the derived name must be relative, got {dir:?} for root {root:?}"
+                !Path::new(&dir).is_absolute() && !dir.contains('/') && !dir.contains('\\'),
+                "the derived name must be relative, got {dir:?} for source {source:?}"
             );
             assert_eq!(
-                worktree_path_in_home(&root, Some(&trees), &dir, None),
+                worktree_path_in_home("/home/me/repo", Some(&trees), &dir, None),
                 Path::new(&trees).join(&dir).to_string_lossy().into_owned(),
-                "root {root:?} must not escape the configured worktree directory"
+                "source {source:?} must not escape the configured worktree directory"
             );
         }
     }
 
-    /// Where a fresh task worktree lands. The default layout is load-bearing:
-    /// every worktree already on disk was minted next to its project folder,
-    /// so an unset (or blanked) setting has to keep producing exactly that
-    /// path — the recreate-from-branch fallback looks for it by name.
+    /// Where a fresh task worktree lands with no folder setting: inside the
+    /// repository, under `.claude/worktrees` — the one directory Claude Code
+    /// also looks in, which is what lets it take a Codeg worktree over.
+    /// Worktrees minted BEFORE this change are unaffected: their folder row
+    /// records the old sibling path and nothing re-derives it.
     #[test]
-    fn a_blank_worktree_root_keeps_worktrees_next_to_the_project() {
+    fn a_blank_worktree_root_uses_the_claude_layout_inside_the_repo() {
         let root = format!("{ABS_PREFIX}/home/me/repo");
-        let expected = Path::new(&format!("{ABS_PREFIX}/home/me"))
-            .join("repo-task-7")
+        let expected = Path::new(&root)
+            .join(".claude/worktrees")
+            .join("task-7-a3f91c")
             .to_string_lossy()
             .into_owned();
         for setting in [None, Some(""), Some("   ")] {
             assert_eq!(
-                worktree_path_in_home(&root, setting, "repo-task-7", None),
+                worktree_path_in_home(&root, setting, "task-7-a3f91c", None),
                 expected,
                 "setting {setting:?} must not move the worktree"
             );

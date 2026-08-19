@@ -43,6 +43,7 @@ pub mod turn_timings;
 pub mod update;
 pub mod web;
 pub mod work_task;
+pub mod worktree_naming;
 pub mod workspace_state;
 pub mod workspace_transfer;
 
