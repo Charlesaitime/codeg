@@ -17,14 +17,18 @@
     高缩放自动升高）；夹取改为派生，缩放 round-trip 不会毁掉用户拖的宽度。
   - `ask_user_question` 工具描述补例外：用户明确要求可点选选项时必须调用，不再被
     「仅在被卡住时用」劝退。
-- **卡在哪**：无阻塞。两条未闭环，都只能实机验证：
-  1. Claude 是否真能接管 Codeg 造的 worktree（形状已逐字对齐，未实测）。
-  2. 点选卡片改动需重编 Rust 才生效；若 Grok 走的是它自己的原生 `_x.ai/ask_user_question`
-     而非 codeg-mcp 的，本次描述改动影响不到它（那个描述在 x.ai 侧，不在本仓库）。
+  - `branchSeedSlug()`：从 `claude/` 分支再建 worktree 不再叠前缀（原会得到
+    `claude/claude-main-4c1517`，第三代继续叠）。
+- **卡在哪**：无阻塞，原先两条待验证项均已实机闭环（2026-08-19）：
+  1. **Claude 能正常接管 Codeg 造的 worktree** — 在 `Arbbot/.claude/worktrees/main-4c1517`
+     实测：git status 干净、HEAD 与主仓 main 同 SHA、`arbbot` 导入解析到 **worktree 自己的**
+     源码（不串主仓）、`tests/strategy` 实跑 exit=0 约 660 项全绿。挪进仓库内部没有破坏
+     独立开发环境，这是该改动最该担心的一点。
+  2. **点选卡片可触发** — 新描述随 codeg-mcp 重建后生效（新 companion 进程晚于构建时间即为证据），
+     Grok 调用的是 codeg-mcp 的 `ask_user_question` 而非 x.ai 原生那条，所以工具描述是有效抓手。
 - **下一步**：
-  - 上面两条实机验证。
   - 可选：后端补写 worktree 文件夹的 `git_branch` 列，让 chip 不再依赖 alias。
-  - 本地 main 目前 ahead origin 8 个 commit，尚未 push。
+  - 本地 main 目前 ahead origin 10 个 commit，尚未 push。
 
 ### 踩过的坑（累积，不删旧条目）
 
@@ -53,6 +57,15 @@
 - [2026-08-19] **桌面端「闪退」多半不是崩溃**。日志最后一行是 `[killed]`、0 个 panic：
   `pnpm tauri dev` 若由 agent 会话的后台任务拉起，会话销毁就连带被杀。**要长期稳定运行，
   必须由用户自己的终端跑**。另外 dev server 被挤到 3001 时（3000 被占）Tauri 会直接启动失败。
+- [2026-08-19] **`include_str!` 的资源改了不会自动重编**：`tool_schema.json` 编进二进制，
+  而 `tauri dev` 的监视器只盯 `.rs`，改 json 后 app 仍跑旧描述，白试两轮。
+  判断办法：`strings target/debug/codeg-mcp | grep <特征串>`。另外主程序 `codeg` 里查不到
+  该字符串是正常的——只有 codeg-mcp 运行时读它，链接器把未使用的常量消除了。
+- [2026-08-19] **codeg-mcp 是 per-launch 进程**：改了它不必重启 app，开一个新会话即可用上
+  新二进制。用 `ps -o lstart` 比对进程启动时间与构建时间就能确认是否生效。
+- [2026-08-19] **用「当前分支名」做新 worktree 的种子会自我叠加**：`claude/main-4c1517`
+  → slug `claude-main-4c1517` → `claude/claude-main-4c1517`，每派生一代长一截。
+  这类 bug 第三代才显形，单点锚点测试抓不到，要写「喂回去循环 N 次仍收敛」的不变式测试。
 - [2026-08-19] **改 JSON 别用 `json.dumps` 整份重写**：一个字符串的改动会变成 53 行 diff。
   对锚点做字符串替换，文件其余部分逐字节不动。
 
