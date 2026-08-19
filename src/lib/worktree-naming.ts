@@ -76,6 +76,29 @@ export function slugify(source: string): string {
 }
 
 /**
+ * The slug to seed a NEW worktree with when branching off `branch`.
+ *
+ * Naming a worktree after the branch it came from stacks up once that branch is
+ * itself one of ours: `claude/main-4c1517` slugifies to `claude-main-4c1517`,
+ * which the prefix then turns into `claude/claude-main-4c1517` — and a third
+ * generation into `claude/claude-claude-…`. Both of OUR halves are dropped
+ * here, so branching off `claude/main-4c1517` seeds `main` and yields
+ * `claude/main-<newhash>`: no stacking, and the name stops growing.
+ *
+ * The trailing hash is only stripped from a `claude/`-prefixed branch. A branch
+ * from anywhere else is passed through untouched — six trailing hex characters
+ * are perfectly ordinary in a hand-made name (`fix-abc123`), and there we have
+ * no reason to believe they are a generated suffix.
+ */
+export function branchSeedSlug(branch: string): string {
+  if (!branch.startsWith(BRANCH_PREFIX)) return branch
+  const rest = branch.slice(BRANCH_PREFIX.length)
+  // Falls back rather than returning empty: `claude/4c1517` is all-suffix, and
+  // an empty seed would silently become the generic `worktree` fallback.
+  return rest.replace(/-[0-9a-f]{6}$/, "") || rest || branch
+}
+
+/**
  * Six lowercase hex characters — the same shape Claude Code appends
  * (`…-bd45b2`). Random rather than derived, so two worktrees named the same
  * thing never collide.

@@ -63,7 +63,7 @@ import { useScrollbarSafeDismiss } from "@/hooks/use-scrollbar-safe-dismiss"
 import { useGitQuickActions } from "@/hooks/use-git-quick-actions"
 import { useImeGuard } from "@/hooks/use-ime-guard"
 import type { FolderDetail, GitBranchList } from "@/lib/types"
-import { claudeWorktreeNaming } from "@/lib/worktree-naming"
+import { branchSeedSlug, claudeWorktreeNaming } from "@/lib/worktree-naming"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { useTabActions } from "@/contexts/tab-context"
 import { useWorkbenchRoute } from "@/contexts/workbench-route-context"
@@ -357,7 +357,10 @@ export function BranchDropdown({ folder, isChatMode }: BranchDropdownProps) {
     // `.claude/worktrees`, on a `claude/`-prefixed branch whose name IS the
     // directory name. Seeded from the current branch because that is what the
     // dialog says it branches from; the user can overwrite both fields.
-    const naming = claudeWorktreeNaming(folderPath, branch ?? "main")
+    const naming = claudeWorktreeNaming(
+      folderPath,
+      branchSeedSlug(branch ?? "main")
+    )
     setWorktreeBranchName(naming.branch)
     setWorktreePath(naming.path)
     setWorktreeOpen(true)

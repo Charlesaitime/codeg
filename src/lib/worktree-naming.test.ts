@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  branchSeedSlug,
   claudeWorktreeNaming,
   displayBranchLabel,
   randomSuffix,
@@ -105,5 +106,44 @@ describe("displayBranchLabel", () => {
     // Nothing follows the prefix, so there is no identifying half to show;
     // an empty chip would read as a rendering bug.
     expect(displayBranchLabel("claude/")).toBe("claude/")
+  })
+})
+
+describe("branchSeedSlug", () => {
+  it("does not stack the prefix when branching off one of our own worktrees", () => {
+    // The bug this exists to prevent: seeding from the branch verbatim gave
+    // `claude/claude-main-4c1517`, and a third generation `claude/claude-claude-…`.
+    const seed = branchSeedSlug("claude/main-4c1517")
+    expect(seed).toBe("main")
+    expect(claudeWorktreeNaming("/r", seed, "a3f91c").branch).toBe(
+      "claude/main-a3f91c"
+    )
+  })
+
+  it("stays the same length however many generations deep it goes", () => {
+    // Feed each generation's branch back in; the seed must reach a fixed point
+    // rather than growing. An invariant, not a single anchor case — growth only
+    // shows up on the third generation.
+    let branch = "claude/main-4c1517"
+    for (let i = 0; i < 5; i++) {
+      const seed = branchSeedSlug(branch)
+      expect(seed).toBe("main")
+      branch = claudeWorktreeNaming("/r", seed, "a3f91c").branch
+      expect(branch).toBe("claude/main-a3f91c")
+    }
+  })
+
+  it("leaves branches that are not ours completely alone", () => {
+    // Six trailing hex characters are ordinary in a hand-made name, so they are
+    // only treated as a generated suffix behind our own prefix.
+    for (const branch of ["main", "develop", "task/49", "fix-abc123"]) {
+      expect(branchSeedSlug(branch)).toBe(branch)
+    }
+  })
+
+  it("keeps something to name the worktree after when the branch is all suffix", () => {
+    // `claude/4c1517` strips to nothing; an empty seed would silently fall back
+    // to the generic `worktree`, losing the only identifying part there was.
+    expect(branchSeedSlug("claude/4c1517")).toBe("4c1517")
   })
 })
