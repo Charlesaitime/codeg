@@ -25,6 +25,27 @@ const BRANCH_PREFIX = "claude/"
 /** The repo-relative directory every new worktree is created under. */
 export const WORKTREES_SUBDIR = ".claude/worktrees"
 
+/**
+ * The branch as it should READ in a tight space — `claude/` dropped, everything
+ * else untouched.
+ *
+ * The prefix is the same on every worktree Codeg makes, so in a sidebar list it
+ * is seven characters of pure noise repeated down the column while the half
+ * that actually identifies the worktree (`main-4c1517`) gets truncated away.
+ * Display only: the full branch still goes in the row's tooltip, and nothing
+ * that talks to git ever sees this value.
+ *
+ * A branch from anywhere else — `main`, an older `task/49`, a hand-made
+ * branch — passes through as-is; only the exact prefix is removed, and only
+ * when something follows it.
+ */
+export function displayBranchLabel(branch: string): string {
+  const rest = branch.startsWith(BRANCH_PREFIX)
+    ? branch.slice(BRANCH_PREFIX.length)
+    : branch
+  return rest || branch
+}
+
 export interface WorktreeNaming {
   /** Final path component, e.g. `shadow-page-mockup-alignment-bd45b2`. */
   dirName: string

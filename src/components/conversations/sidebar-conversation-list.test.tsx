@@ -923,6 +923,33 @@ describe("SidebarConversationList — worktree grouping (Show worktrees)", () =>
     expect(repoChip?.className).not.toContain("font-semibold")
   })
 
+  /**
+   * The chip shows the branch WITHOUT its `claude/` prefix, while the tooltip
+   * keeps the whole thing. Both halves matter: the visible text is what the
+   * user reads in a ~110px pill (the prefix would eat it and truncate the
+   * identifying part away), and the tooltip is the only place the real branch
+   * name — the one to type at git — is recoverable from the row.
+   */
+  it("shows the branch without its claude/ prefix but keeps it in the tooltip", () => {
+    const wt = {
+      ...folder(2, "wt-feature", 1),
+      git_branch: "claude/main-4c1517",
+    } as unknown as FolderDetail
+    const folders = [folder(1, "Repo"), wt]
+    useAppWorkspaceStore.setState({
+      folders,
+      allFolders: folders,
+      conversations: [conv(21, 2)],
+      branches: new Map([[1, "main"]]),
+    })
+    render(wtTree(false))
+
+    const chip = document.querySelector('[title="Branch: claude/main-4c1517"]')
+    expect(chip).not.toBeNull()
+    expect(chip?.textContent).toBe("main-4c1517")
+    expect(chip?.textContent).not.toContain("claude/")
+  })
+
   it("splits the repo into a container + root sub-group + worktree sub-group when on", () => {
     render(wtTree(true))
     // Container header (repo id 1) → root sub-group header (also repo id 1, its

@@ -22,6 +22,7 @@ import type { DbConversationSummary, ConversationStatus } from "@/lib/types"
 import { STATUS_ORDER } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { formatConversationTitle } from "@/lib/conversation-title"
+import { displayBranchLabel } from "@/lib/worktree-naming"
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -370,7 +371,14 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                       className="h-[0.5625rem] w-[0.5625rem] shrink-0"
                       aria-hidden
                     />
-                    <span className="truncate">{branchLabel}</span>
+                    {/* The `claude/` prefix is dropped here and ONLY here: it
+                        repeats on every worktree row, so showing it spends the
+                        chip's width on the identical half and truncates the
+                        half that tells two worktrees apart. The tooltip above
+                        still carries the full branch. */}
+                    <span className="truncate">
+                      {displayBranchLabel(branchLabel)}
+                    </span>
                   </span>
                 ) : null}
                 {/* Re-parented out of a removed worktree: history loads fine,

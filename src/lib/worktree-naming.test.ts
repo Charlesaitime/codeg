@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { claudeWorktreeNaming, randomSuffix, slugify } from "./worktree-naming"
+import {
+  claudeWorktreeNaming,
+  displayBranchLabel,
+  randomSuffix,
+  slugify,
+} from "./worktree-naming"
 
 describe("slugify", () => {
   it("lowercases and hyphenates a phrase", () => {
@@ -68,5 +73,37 @@ describe("claudeWorktreeNaming", () => {
     expect(claudeWorktreeNaming("C:\\src\\repo", "x", "aaaaaa").path).toBe(
       "C:\\src\\repo\\.claude\\worktrees\\x-aaaaaa"
     )
+  })
+})
+
+describe("displayBranchLabel", () => {
+  it("drops the claude/ prefix so the identifying half survives truncation", () => {
+    expect(displayBranchLabel("claude/main-4c1517")).toBe("main-4c1517")
+    expect(
+      displayBranchLabel("claude/shadow-page-mockup-alignment-bd45b2")
+    ).toBe("shadow-page-mockup-alignment-bd45b2")
+  })
+
+  it("leaves every other branch exactly as it is", () => {
+    // Only the exact prefix goes. Anything that merely resembles it, and any
+    // branch from outside this scheme, has to survive untouched — the chip is
+    // the only place the branch is shown on the row.
+    for (const branch of [
+      "main",
+      "develop",
+      "task/49",
+      "automation/3/run-8",
+      "claudette/x",
+      "feature/claude/thing",
+      "CLAUDE/upper",
+    ]) {
+      expect(displayBranchLabel(branch)).toBe(branch)
+    }
+  })
+
+  it("keeps a bare prefix rather than rendering an empty chip", () => {
+    // Nothing follows the prefix, so there is no identifying half to show;
+    // an empty chip would read as a rendering bug.
+    expect(displayBranchLabel("claude/")).toBe("claude/")
   })
 })
