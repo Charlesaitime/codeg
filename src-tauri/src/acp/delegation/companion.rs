@@ -2278,6 +2278,36 @@ mod tests {
         })
     }
 
+    /// The tool description is the ONLY thing that decides whether a model
+    /// reaches for the card instead of writing the choices out as prose — there
+    /// is no prompt injection anywhere in the ACP layer. The rest of the
+    /// description is deliberately restrictive ("use ONLY when blocked"), which
+    /// on its own also talks the model out of the one case the user asked for
+    /// out loud. This pins the carve-out that makes an explicit request win.
+    #[test]
+    fn ask_tool_description_honours_an_explicit_request_for_a_picker() {
+        let schema: Value = serde_json::from_str(TOOL_SCHEMA_JSON).expect("schema parses");
+        let description = schema
+            .as_array()
+            .expect("schema is an array")
+            .iter()
+            .find(|t| t.get("name").and_then(Value::as_str) == Some("ask_user_question"))
+            .and_then(|t| t.get("description"))
+            .and_then(Value::as_str)
+            .expect("ask_user_question has a description");
+
+        // The restriction still stands for the ordinary case…
+        assert!(
+            description.contains("Use ONLY when you are blocked"),
+            "the tool must stay opt-in for the unprompted case: {description}"
+        );
+        // …and an explicit ask overrides it.
+        assert!(
+            description.contains("EXCEPTION to the 'only when blocked' rule"),
+            "an explicitly requested picker must override the restriction: {description}"
+        );
+    }
+
     #[tokio::test]
     async fn ask_user_question_spawns_when_valid_and_enabled() {
         let line = json!({
