@@ -5,35 +5,28 @@
 
 ## 当前状态
 
-- **任务**：让 Codeg 造的 worktree 与 Claude Code 命名兼容；侧栏按「仓库 → 会话平铺 + 分支标」展示；
-  侧栏可拖窄；agent 的选项能渲染成可点选卡片。
+- **任务**：查清「桌面端 grok 主模型回答重复」的成因，并在 Codeg 里把这种退化标出来。
+  分支 `claude/grok-desktop-duplicate-response-ff2cdb`（worktree 同名），未合并 main。
 - **已完成**：
-  - 单一真源 `src-tauri/src/worktree_naming.rs` + `src/lib/worktree-naming.ts`，统一为
-    `目录 = <仓库>/.claude/worktrees/<slug>-<hash6>`、`分支 = claude/<同名>`；三个创建入口全部改走它。
-  - `git worktree add` 成功后写 `.git/info/exclude`，避免 worktree 污染父仓库 `git status`。
-  - 侧栏：worktree 分组默认关闭（平铺成为默认视图），每行带分支 chip；chip 靠「有无实底 + 字重」
-    区分 worktree 与仓库自身分支，并去掉 `claude/` 前缀（完整分支名留在 tooltip）。
-  - 侧栏拖拽下限从写死 300 改为按窗口控件实际占用推导（macOS 100% → 214，Windows → 200，
-    高缩放自动升高）；夹取改为派生，缩放 round-trip 不会毁掉用户拖的宽度。
-  - `ask_user_question` 工具描述补例外：用户明确要求可点选选项时必须调用，不再被
-    「仅在被卡住时用」劝退。
-  - `branchSeedSlug()`：从 `claude/` 分支再建 worktree 不再叠前缀（原会得到
-    `claude/claude-main-4c1517`，第三代继续叠）。
-- **卡在哪**：无阻塞，原先两条待验证项均已实机闭环（2026-08-19）：
-  1. **Claude 能正常接管 Codeg 造的 worktree** — 在 `Arbbot/.claude/worktrees/main-4c1517`
-     实测：git status 干净、HEAD 与主仓 main 同 SHA、`arbbot` 导入解析到 **worktree 自己的**
-     源码（不串主仓）、`tests/strategy` 实跑 exit=0 约 660 项全绿。挪进仓库内部没有破坏
-     独立开发环境，这是该改动最该担心的一点。
-  2. **点选卡片可触发** — 新描述随 codeg-mcp 重建后生效（新 companion 进程晚于构建时间即为证据），
-     Grok 调用的是 codeg-mcp 的 `ask_user_question` 而非 x.ai 原生那条，所以工具描述是有效抓手。
-- **已同步上游**（2026-08-19）：本地 main 合入 `origin/main` 的 2188 个 commit，版本 0.26.1 → **0.26.2**。
-  零冲突，本地 11 个 commit 全部保留（逐条验过既在历史里、也在文件里）。
-  备份 ref：`backup/pre-upstream-sync-20260819` / tag `backup-pre-upstream-sync`。
+  - **定性**：不是 Codeg 的解析/渲染 bug。重复那段本来就写在 grok 自己的
+    `chat_history.jsonl` 里（第 106 与 131 行相似度 0.998），Codeg 只是如实显示。
+    成因是 grok 连发 9 次同参 `grep` → 它自己的防循环保护注入 system-reminder 要求停止
+    → 模型被截断，复述了最近一条终稿而不是回答新问题。
+  - **改动**：`parsers/grok.rs` 新增 `inject_grok_loop_halt_notices`，从
+    `chat_history.jsonl` 捞回该 reminder，按 `prompt_index` 归位到被它拖坏的那个 assistant
+    turn，合成一对 `meta.loopHalt` 的 ToolUse/ToolResult（沿用 `auto_compact_completed`
+    → `contextCompaction` 的桥接形状），插在该轮最后一个文本块之前。
+  - 前端：`src/lib/loop-halt.ts` + `src/components/message/loop-halt-card.tsx`（琥珀色分隔条
+    警示卡），renderer 路由 + adapter 里打断工具组折叠，10 语言文案齐。
+  - **磁盘**：删掉 32G Rust target，并在 `~/Documents/AI tools/.cargo/config.toml` 配了
+    共享 `target-dir`，主仓与所有 worktree 共用一份产物（详见「环境 / 依赖配置」）。
+- **卡在哪**：无阻塞。**未做真实 UI 回测**（用户拍板跳过）——卡片在桌面端实际长什么样、
+  在真实会话里的视觉位置，都还没有人眼确认过。
 - **下一步**：
-  - 可选：后端补写 worktree 文件夹的 `git_branch` 列，让 chip 不再依赖 alias。
-  - 留意与上游相邻功能是否重复：上游新增了「管理对话弹窗按分支筛选并在每行显示分支」，
-    与侧栏 chip 是两个界面、目前不打架，但概念相近。
-  - 本地 main 目前 ahead origin 12 个 commit，尚未 push。
+  - 启动桌面端打开 Arbbot 那条 grok 会话（`01a01923-91cf-7072-b7b3-aba343a52fe7`），
+    确认卡片位置与配色，然后再决定是否合并 main。
+  - 可选：live 路径目前覆盖不到（reminder 不过 ACP 流，只在 chat_history.jsonl），
+    要实时提示得加文件监视，本次刻意没做。
 
 ### 踩过的坑（累积，不删旧条目）
 
@@ -80,6 +73,18 @@
 - [2026-08-19] **改 JSON 别用 `json.dumps` 整份重写**：一个字符串的改动会变成 53 行 diff。
   对锚点做字符串替换，文件其余部分逐字节不动。
 
+- [2026-08-22] **grok 的防循环 reminder 只存在于 `chat_history.jsonl`**：`updates.jsonl` 和
+  `events.jsonl` 里 grep 不到，且那一轮的 `turn_completed` 仍是 `stop_reason: "end_turn"`。
+  也就是说被截断的退化回复在 ACP 流里跟正常回复完全一样 —— 判断「模型有没有被自己的保护
+  掐断」不能只看解析流，必须去读模型侧那份历史。
+- [2026-08-22] **注入必须排在 `relocate_orphaned_tool_results` 之前**：那个 pass 末尾会
+  `turns.retain(|t| !t.blocks.is_empty())` 删掉空 turn，一旦跑过，`parse_updates` 记下的
+  turn 下标就可能失效。凡是「解析期记下标、后期再用」的写法，都要检查中间有没有会增删元素的 pass。
+- [2026-08-22] **同一段文本在一条会话里会出现两次**，正是本 bug 的症状（复述上一条终稿），
+  所以「按文本匹配去定位那个 turn」是错的解法 —— 会挂到更早那条上。改用 `prompt_index` 归位。
+- [2026-08-22] **磁盘满会伪装成编译器错误**：`failed to build archive … No space left on
+  device (os error 28)`。看到链接阶段的怪错先 `df -h`，别去调构建配置。
+
 ### 关键架构决策
 
 - [2026-08-19] **命名真源做成前后端两份实现而不是一份**。后端（Rust）负责任务 / 自动化，
@@ -105,10 +110,26 @@
   那会让 agent 为小事弹卡片打断用户。ACP 层没有任何 prompt 注入机制，工具描述是唯一抓手，
   因此配了契约测试同时钉住「限制仍在」和「例外也在」。
 
+- [2026-08-22] **退化提示沿用 `contextCompaction` 的 meta 桥接形状，而不是给 `MessageTurn`
+  加字段**：解析器合成一对带 `_meta.loopHalt` 的 ToolUse/ToolResult，前端按 meta（而非工具名）
+  路由到专用卡片。这样历史、快照、DB 重载三条路径自动一致，也不用动共享数据模型。
+- [2026-08-22] **只做历史路径，不做 live**：reminder 不经过 ACP 流，实时提示只能靠监视
+  `chat_history.jsonl`，成本远高于收益。代价是卡片要等会话重新从磁盘加载才出现，已在
+  `src/lib/loop-halt.ts` 顶部写明。
+- [2026-08-22] **细节字段抽不到就留空，不猜**：模板改词时 `tool` / `repeats` 会取不到，
+  此时只渲染「本轮被防循环保护中止」的裸标签。宁可少说，不能显示一个编出来的次数。
+- [2026-08-22] **共享 `target-dir` 放在仓库的祖先目录而不是仓库里**：`Codemax/.cargo/config.toml`
+  是已入库文件（带 aarch64 linker 配置），改它会进 commit 影响别人和 CI。cargo 会把从当前目录
+  一路向上的所有 `.cargo/config.toml` 合并，所以放 `AI tools/` 那层等效且不碰任何仓库文件。
+
 ### 环境 / 依赖配置
 
-- 磁盘曾经写满导致 `cargo` 报 `No space left on device (os error 28)`。构建缓存很占地方：
-  主仓 `src-tauri/target` 约 9.7G，每个 worktree 各自还有一份（约 5.6G）。
+- **Rust 编译产物已改为全局共享**（2026-08-22）：`~/Documents/AI tools/.cargo/config.toml`
+  把 `build.target-dir` 指向 `~/Documents/AI tools/.cargo-target-shared`，主仓与所有 worktree
+  共用一份，各 checkout 下不再生成 `src-tauri/target`。此前是主仓 20G + 每 worktree 12G，
+  开两三个 worktree 就把 460G 盘塞满（实测只剩 293MB，`cargo` 报
+  `No space left on device (os error 28)`）。该文件不属于任何仓库，换机器要手动重建。
+  代价：切分支 / 切 worktree 时缓存命中率下降，重编次数变多。
 - Rust 测试跑服务器模式最省事：`cd src-tauri && cargo test --no-default-features --lib`。
   桌面模式需先 `pnpm build`。
 - `git worktree add` 会自动创建 `.claude/worktrees` 这一串前置目录，无需 `mkdir`。
@@ -132,16 +153,56 @@
 | 侧栏宽度范围（下限推导） | `src/lib/window-chrome.ts` `sidebarMinWidth` + `src/contexts/sidebar-context.tsx` |
 | agent 可见的工具描述（含 ask） | `src-tauri/src/acp/delegation/tool_schema.json` |
 | 点选卡片的渲染与解析 | `src/lib/ask-question.ts` + `src-tauri/src/acp/delegation/companion.rs` |
+| grok 防循环退化提示（解析侧） | `src-tauri/src/parsers/grok.rs` `inject_grok_loop_halt_notices` / `read_grok_loop_halts` |
+| 同上（前端） | `src/lib/loop-halt.ts` + `src/components/message/loop-halt-card.tsx`，路由在 `content-parts-renderer.tsx`，分组打断在 `ai-elements-adapter.ts` |
+| grok 会话文件布局 | `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/`：`updates.jsonl` 是 ACP 流（解析源），`chat_history.jsonl` 是模型侧历史（ask 答案、防循环 reminder 只在这里） |
 
 ## 历史记录索引
 
 | 时间 | 一句话摘要 | 涉及模块/文件 | 详情锚点 |
 |------|-----------|--------------|---------|
+| 2026-08-22 | grok 重复回答定性为模型侧防循环截断，Codeg 加退化提示卡；磁盘根治共享 target | parsers/grok.rs, loop-halt.ts, loop-halt-card.tsx, .cargo/config.toml | [#h20260822-1](#h20260822-1) |
 | 2026-08-19 | 同步上游 0.26.2（2188 commit，零冲突，本地 11 个全保留） | 全仓 102 文件 | [#h20260819-3](#h20260819-3) |
 | 2026-08-19 | 侧栏平铺+分支标定稿、拖拽下限动态化、ask 卡片可触发 | sidebar-context, window-chrome, tool_schema | [#h20260819-2](#h20260819-2) |
 | 2026-08-19 | Claude 兼容 worktree 布局 + 侧栏分支标，合并到 main | worktree_naming, work_task, automation, sidebar | [#h20260819-1](#h20260819-1) |
 
 ## 详情记录
+
+### <a name="h20260822-1"></a>2026-08-22 — grok 回答重复：定性 + 退化提示卡 + 磁盘根治
+
+**背景**：用户报「桌面端 grok 主模型的分支后面回答重复了」，指向
+`Arbbot/.claude/worktrees/main-80dd85` 那条会话。
+
+**定性（先证伪 Codeg）**：直接读 grok 自己的
+`~/.grok/sessions/…main-80dd85/01a01923-91cf-7072-b7b3-aba343a52fe7/chat_history.jsonl`：
+第 106 行与第 131 行的 assistant 内容相似度 **0.998**（近乎逐字复制）。也就是重复本来就在
+grok 写的文件里，Codeg 显示无误。中间第 112–128 行是 **9 次同参 `grep`**（返回内容其实各不
+相同，9 个不同 md5，说明不是"看到同样输出才卡住"），第 130 行是 grok CLI 注入的合成提醒
+（`synthetic_reason: "system_reminder"`，"stuck in a polling loop … This turn will be halted
+automatically"）。该提醒文本在 Codemax 代码库里 grep 不到，确认是 grok 侧产物。同一模式在这
+条会话出现过两次（第 51–60 行也是 8 次同参 grep），只是那次复述的内容碰巧对题没被察觉。
+另：该 transcript 是线性的（`rewind_points.jsonl` 只有 prompt_index 0~14，无 fork 出的 S2），
+所以跟 Codeg 的 fork / 分支链路无关。
+
+**改动**：Codeg 改不了模型行为，但可以让这种退化不再"看起来像正常回答"。
+`inject_grok_loop_halt_notices` 扫 `chat_history.jsonl`，按最近一条真实 user 行的
+`prompt_index` 把 reminder 归位（合成行自身没有 prompt_index），每个 prompt 只留一条，
+再合成 `meta.loopHalt = {version, tool?, repeats?}` 的 ToolUse/ToolResult 插到该 turn 最后
+一个文本块之前。前端按 meta 路由到 `<LoopHaltCard>`（琥珀色分隔条），并在
+`ai-elements-adapter` 里打断工具组折叠——把警告折进"调用 N 个工具"等于没提示。
+
+**验证**：4 个新 Rust 单测 + 6 个前端单测 + 1 个 adapter 分组测试全绿；前端全量
+4381 passed；`cargo test --no-default-features --lib` 2714 passed（唯一失败
+`remove_worktree_deletes_a_branch_plain_delete_cannot` 已 stash 到干净 HEAD 复现，是既有环境问题）。
+**实机验证**：临时测试指向真实 `~/.grok/sessions`，解析那条会话命中 2 处
+（turn 11 与 turn 29，meta `{tool:"grep", repeats:8, version:1}`），与 chat_history 里的两次
+完全对应，测试跑完即删。**未做真实 UI 回测**（用户拍板跳过）。
+
+**磁盘**：中途 `cargo` 报 `No space left on device`——460G 盘只剩 293MB。实测大头：
+微信 Container 90G、Rust target 32G（主仓 20G + 本 worktree 12G）、Downloads 40G、
+Xcode Developer 13G、各类缓存 ~23G。用户选择只删 Rust target（→ 32G 可用），并采纳
+"仓库级共享 target"根治方案。
+
 
 ### <a name="h20260819-1"></a>2026-08-19 — Claude 兼容 worktree 布局 + 侧栏分支标
 
