@@ -3326,6 +3326,11 @@
         "compactedTokens": "Contexto compactado · {before} → {after} tokens",
         "failed": "Falha ao compactar o contexto"
       },
+      "loopHalt": {
+        "halted": "A proteção contra loops interrompeu este turno",
+        "haltedWithTool": "A proteção contra loops interrompeu este turno · `{tool}` repetido {repeats}×",
+        "hint": "O Grok repetiu a mesma chamada de ferramenta até a própria proteção mandar parar. A resposta abaixo foi escrita sob essa ordem de interrupção e pode repetir uma resposta anterior em vez de responder à pergunta."
+      },
       "sessionFailure": {
         "category": {
           "connection": "Problema de conexão",

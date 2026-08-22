@@ -3326,6 +3326,11 @@
         "compactedTokens": "Contexto compactado · {before} → {after} tokens",
         "failed": "Error al compactar el contexto"
       },
+      "loopHalt": {
+        "halted": "La protección contra bucles detuvo este turno",
+        "haltedWithTool": "La protección contra bucles detuvo este turno · `{tool}` repetido {repeats} veces",
+        "hint": "Grok repitió la misma llamada de herramienta hasta que su propia protección le ordenó parar. La respuesta siguiente se escribió bajo esa orden y puede repetir una respuesta anterior en lugar de contestar la pregunta."
+      },
       "sessionFailure": {
         "category": {
           "connection": "Problema de conexión",

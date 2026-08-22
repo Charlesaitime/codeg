@@ -3326,6 +3326,11 @@
         "compactedTokens": "コンテキストを圧縮 · {before} → {after} トークン",
         "failed": "コンテキストの圧縮に失敗しました"
       },
+      "loopHalt": {
+        "halted": "ループ保護によりこのターンは中断されました",
+        "haltedWithTool": "ループ保護によりこのターンは中断されました · `{tool}` を {repeats} 回繰り返し",
+        "hint": "Grok が同じツール呼び出しを繰り返し、Grok 自身のループ保護が停止を指示しました。以下の返答はその停止指示のもとで書かれており、今回の質問に答えず以前の回答を繰り返している可能性があります。"
+      },
       "sessionFailure": {
         "category": {
           "connection": "接続の問題",

@@ -53,6 +53,31 @@ const GROK_SPAWN_SUBAGENT_TOOL_NAME: &str = "spawn_subagent";
 /// async-launch acks (see `attach_subagent_stats`).
 const GROK_SUBAGENT_STARTED_ACK_PREFIX: &str = "Subagent started in background";
 
+/// Grok's own anti-loop guard. When the model repeats the IDENTICAL tool call
+/// N times in a row, the CLI injects a synthetic `<system-reminder>` ordering it
+/// to stop ("… you appear to be stuck in a polling loop … This turn will be
+/// halted automatically if the identical call keeps repeating") and cuts the
+/// turn short if it keeps going. Verified against grok 4.6 / 0.2.x captures.
+///
+/// The reminder exists ONLY in the model-facing `chat_history.jsonl` — it is
+/// absent from `updates.jsonl` and `events.jsonl`, and the turn still closes
+/// with `stop_reason: "end_turn"`. So the transcript gives no other signal that
+/// the reply was produced under a halt order; observed outcome is the model
+/// bailing out and restating an EARLIER answer near-verbatim, which reads like a
+/// normal (but wrong) reply. Recovering the reminder is what lets the UI say so.
+///
+/// Matched case-insensitively on this fragment (stable across the template's
+/// tool name / repeat count).
+const GROK_LOOP_HALT_NEEDLE: &str = "you appear to be stuck in a polling loop";
+
+/// Template fragments bracketing the repeated tool's name / repeat count in the
+/// same reminder: ``You have called the same tool (`grep`) with the exact same
+/// arguments 8 times in a row``. Both are best-effort — a template reword loses
+/// the detail but keeps the notice.
+const GROK_LOOP_HALT_TOOL_PREFIX: &str = "the same tool (`";
+const GROK_LOOP_HALT_COUNT_PREFIX: &str = "with the exact same arguments ";
+const GROK_LOOP_HALT_COUNT_SUFFIX: &str = " times in a row";
+
 /// Cap for a subagent's final output folded into the background-task marker /
 /// a nested tool-call preview. Mirrors `claude.rs::BACKGROUND_RESULT_MAX_CHARS`
 /// and the 500-char nested previews of `claude.rs`/`codebuddy.rs`.
@@ -271,6 +296,18 @@ impl GrokParser {
     fn build_detail(&self, session_dir: &Path, session_id: &str) -> ConversationDetail {
         let mut parsed = parse_updates(&session_dir.join("updates.jsonl"));
         let meta = read_summary_json(session_dir);
+
+        // Flag replies grok produced under its OWN anti-loop halt order — a
+        // signal that exists only in `chat_history.jsonl` (see
+        // `inject_grok_loop_halt_notices`). Runs FIRST: it addresses turns by the
+        // indices `parse_updates` recorded, and `relocate_orphaned_tool_results`
+        // below can prune a turn. Only adds a well-formed ToolUse/ToolResult pair
+        // inside one turn, so the passes after it stay no-ops on the injection.
+        inject_grok_loop_halt_notices(
+            &mut parsed.turns,
+            &parsed.user_prompt_indices,
+            &session_dir.join("chat_history.jsonl"),
+        );
 
         // Defensive normalization shared with the other parsers: hoist any tool
         // result that landed outside its call's turn, and structurize file-read
@@ -607,6 +644,13 @@ struct ParsedUpdates {
     /// Model discovered in-stream (`user_message_chunk._meta.modelId`); a
     /// fallback when `summary.json` lacks `current_model_id`.
     model: Option<String>,
+    /// `(index into `turns`, `_meta.promptIndex`)` for every user turn that
+    /// declared one. The only bridge from `chat_history.jsonl` — which numbers
+    /// prompts but knows nothing of turns — back to a turn, used by
+    /// [`inject_grok_loop_halt_notices`]. Consumed BEFORE any pass that can drop
+    /// a turn (`relocate_orphaned_tool_results` prunes emptied ones), so the
+    /// indices are still exact.
+    user_prompt_indices: Vec<(usize, i64)>,
     /// `spawn_subagent` tool_call ids in encounter order, paired against
     /// `subagents` by `attach_subagent_stats`.
     spawn_call_ids: Vec<String>,
@@ -760,6 +804,9 @@ fn parse_updates(path: &Path) -> ParsedUpdates {
                     open_user_prompt_index = update
                         .pointer("/_meta/promptIndex")
                         .and_then(Value::as_i64);
+                    if let Some(prompt_index) = open_user_prompt_index {
+                        out.user_prompt_indices.push((out.turns.len(), prompt_index));
+                    }
                     out.turns.push(MessageTurn {
                         id: String::new(), // assigned in a final pass
                         role: TurnRole::User,
@@ -1077,6 +1124,186 @@ fn user_chunk_to_block(update: &Value) -> Option<ContentBlock> {
             text: update_text(update),
         }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// chat_history.jsonl — grok anti-loop halt notices
+// ---------------------------------------------------------------------------
+
+/// One recovered anti-loop reminder (see [`GROK_LOOP_HALT_NEEDLE`]), keyed by
+/// the prompt it interrupted.
+#[derive(Debug, PartialEq)]
+struct GrokLoopHalt {
+    prompt_index: i64,
+    /// The repeated tool's name, when the template still carries it.
+    tool: Option<String>,
+    /// How many identical calls in a row tripped the guard.
+    repeats: Option<u64>,
+}
+
+/// Flag every assistant turn grok produced under its own anti-loop halt order.
+///
+/// The reminder lives only in `chat_history.jsonl` (see [`GROK_LOOP_HALT_NEEDLE`]);
+/// the parsed stream shows a normal-looking reply, so without this the degenerate
+/// answer that follows — typically a near-verbatim restatement of an earlier one —
+/// is indistinguishable from a real one. Synthesizes a completed ToolUse/ToolResult
+/// pair tagged `meta.loopHalt` into the offending assistant turn, the same shape
+/// the `auto_compact_completed` bridge uses, so the frontend renders a dedicated
+/// notice instead of a generic tool card.
+///
+/// The notice is placed immediately BEFORE the turn's last text block, matching
+/// where the reminder actually landed: after the tool spam, before the final
+/// answer. No-op when `chat_history.jsonl` is absent or carries no such reminder.
+fn inject_grok_loop_halt_notices(
+    turns: &mut [MessageTurn],
+    user_prompt_indices: &[(usize, i64)],
+    chat_history: &Path,
+) {
+    if user_prompt_indices.is_empty() {
+        return;
+    }
+    let halts = read_grok_loop_halts(chat_history);
+    for halt in halts {
+        let Some(&(user_idx, _)) = user_prompt_indices
+            .iter()
+            .find(|(_, prompt_index)| *prompt_index == halt.prompt_index)
+        else {
+            continue;
+        };
+        // The assistant turn answering that prompt: the first one after the user
+        // turn, stopping at the next user turn (a prompt whose reply never
+        // materialized has none).
+        let Some(assistant_idx) = turns
+            .iter()
+            .enumerate()
+            .skip(user_idx + 1)
+            .take_while(|(_, t)| !matches!(t.role, TurnRole::User))
+            .find(|(_, t)| matches!(t.role, TurnRole::Assistant))
+            .map(|(idx, _)| idx)
+        else {
+            continue;
+        };
+        let id = format!("grok-loop-halt-{}", halt.prompt_index);
+        let blocks = &mut turns[assistant_idx].blocks;
+        // Idempotent: re-parsing the same transcript must not stack notices.
+        if blocks.iter().any(|b| {
+            matches!(b, ContentBlock::ToolUse { tool_use_id: Some(existing), .. } if *existing == id)
+        }) {
+            continue;
+        }
+        let mut meta = serde_json::Map::new();
+        let mut payload = serde_json::Map::new();
+        payload.insert("version".to_string(), Value::from(1));
+        if let Some(tool) = halt.tool {
+            payload.insert("tool".to_string(), Value::from(tool));
+        }
+        if let Some(repeats) = halt.repeats {
+            payload.insert("repeats".to_string(), Value::from(repeats));
+        }
+        meta.insert("loopHalt".to_string(), Value::Object(payload));
+        // Before the final text block — the reminder preceded the reply it
+        // degraded. Appended when the turn ended without one (tools only).
+        let at = blocks
+            .iter()
+            .rposition(|b| matches!(b, ContentBlock::Text { .. }))
+            .unwrap_or(blocks.len());
+        blocks.insert(
+            at,
+            ContentBlock::ToolResult {
+                tool_use_id: Some(id.clone()),
+                output_preview: None,
+                is_error: false,
+                agent_stats: None,
+                images: Vec::new(),
+            },
+        );
+        blocks.insert(
+            at,
+            ContentBlock::ToolUse {
+                tool_use_id: Some(id),
+                tool_name: "loop_halt".to_string(),
+                input_preview: None,
+                status: None,
+                meta: Some(Value::Object(meta)),
+            },
+        );
+    }
+}
+
+/// Scan `chat_history.jsonl` for grok's anti-loop reminders, attributing each to
+/// the prompt in flight when it fired (`prompt_index` of the last real user row —
+/// the synthetic reminder itself carries none). At most one per prompt: a second
+/// trip inside the same turn says nothing new, and the notice is placed once.
+fn read_grok_loop_halts(chat_history: &Path) -> Vec<GrokLoopHalt> {
+    let mut out: Vec<GrokLoopHalt> = Vec::new();
+    let Ok(file) = fs::File::open(chat_history) else {
+        return out;
+    };
+    let mut current_prompt_index: Option<i64> = None;
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if v.get("type").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        // A real prompt carries `prompt_index`; grok's own injections carry
+        // `synthetic_reason` instead and inherit the prompt in flight.
+        if let Some(prompt_index) = v.get("prompt_index").and_then(Value::as_i64) {
+            current_prompt_index = Some(prompt_index);
+            continue;
+        }
+        if v.get("synthetic_reason").and_then(Value::as_str) != Some("system_reminder") {
+            continue;
+        }
+        let Some(prompt_index) = current_prompt_index else {
+            continue;
+        };
+        if out.iter().any(|h| h.prompt_index == prompt_index) {
+            continue;
+        }
+        let text = grok_history_text(v.get("content"));
+        if !text.to_lowercase().contains(GROK_LOOP_HALT_NEEDLE) {
+            continue;
+        }
+        out.push(GrokLoopHalt {
+            prompt_index,
+            tool: grok_between(&text, GROK_LOOP_HALT_TOOL_PREFIX, "`)")
+                .map(str::to_string)
+                .filter(|tool| !tool.is_empty()),
+            repeats: grok_between(
+                &text,
+                GROK_LOOP_HALT_COUNT_PREFIX,
+                GROK_LOOP_HALT_COUNT_SUFFIX,
+            )
+            .and_then(|count| count.trim().parse::<u64>().ok()),
+        });
+    }
+    out
+}
+
+/// Flatten a `chat_history.jsonl` message `content` into text. Grok writes user
+/// rows as either a bare string or an array of `{type:"text", text}` blocks.
+fn grok_history_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The slice between the FIRST `prefix` and the next `suffix` after it, if any.
+fn grok_between<'a>(haystack: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    let rest = &haystack[haystack.find(prefix)? + prefix.len()..];
+    Some(&rest[..rest.find(suffix)?])
 }
 
 // ---------------------------------------------------------------------------
@@ -2668,6 +2895,143 @@ mod tests {
         assert_eq!(home, PathBuf::from("/custom/grok"));
         let fallback = resolve_grok_home_from(None, Some("/home/me".into()));
         assert_eq!(fallback, PathBuf::from("/home/me/.grok"));
+    }
+
+    // --- grok anti-loop halt notices (chat_history.jsonl) ---
+
+    /// Two prompts; on the second the model spams one tool and grok's guard
+    /// fires. Shapes copied from a real 0.2.x capture (grok 4.6): the reminder is
+    /// a `type:"user"` row with `synthetic_reason:"system_reminder"` and NO
+    /// `prompt_index`, and it exists only here — `updates.jsonl` shows a clean
+    /// `end_turn`.
+    const LOOP_HALT_UPDATES: &str = concat!(
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"补完 2 和 3"},"_meta":{"promptIndex":0}}},"timestamp":1787128000}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"已补完 2 和 3"}}},"timestamp":1787128010}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"turn_completed","prompt_id":"p0","stop_reason":"end_turn"}},"timestamp":1787128011}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"通读代码看还有什么可优化"},"_meta":{"promptIndex":1}}},"timestamp":1787128100}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"call-g1","title":"grep","rawInput":{"pattern":"LLM"},"_meta":{"x.ai/tool":{"name":"grep","kind":"search"}}}},"timestamp":1787128101}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-g1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"hits"}}]}},"timestamp":1787128102}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"已补完 2 和 3"}}},"timestamp":1787128110}"#, "\n",
+        r#"{"method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"turn_completed","prompt_id":"p1","stop_reason":"end_turn"}},"timestamp":1787128111}"#, "\n",
+    );
+
+    const LOOP_HALT_HISTORY: &str = concat!(
+        r#"{"type":"user","content":[{"type":"text","text":"<user_query> 补完 2 和 3 </user_query>"}],"prompt_index":0}"#, "\n",
+        r#"{"type":"assistant","content":"已补完 2 和 3"}"#, "\n",
+        r#"{"type":"user","content":[{"type":"text","text":"<user_query> 通读代码看还有什么可优化 </user_query>"}],"prompt_index":1}"#, "\n",
+        r#"{"type":"user","content":[{"type":"text","text":"<system-reminder>\nYou have called the same tool (`grep`) with the exact same arguments 8 times in a row — you appear to be stuck in a polling loop. Stop repeating this call.\n</system-reminder>"}],"synthetic_reason":"system_reminder"}"#, "\n",
+        r#"{"type":"assistant","content":"已补完 2 和 3"}"#, "\n",
+    );
+
+    fn loop_halt_fixture(history: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+        let (tmp, sessions) = fixture(SUMMARY, LOOP_HALT_UPDATES);
+        if let Some(history) = history {
+            write(&ask_session_dir(&sessions), "chat_history.jsonl", history);
+        }
+        (tmp, sessions)
+    }
+
+    /// The loopHalt meta payload of every turn, in turn order.
+    fn loop_halt_metas(detail: &ConversationDetail) -> Vec<(usize, Value)> {
+        detail
+            .turns
+            .iter()
+            .enumerate()
+            .flat_map(|(idx, t)| t.blocks.iter().map(move |b| (idx, b)))
+            .filter_map(|(idx, b)| match b {
+                ContentBlock::ToolUse {
+                    tool_name, meta, ..
+                } if tool_name == "loop_halt" => {
+                    Some((idx, meta.clone().unwrap_or(Value::Null)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn loop_halt_reminder_marks_the_reply_it_degraded() {
+        let (_tmp, sessions) = loop_halt_fixture(Some(LOOP_HALT_HISTORY));
+        let detail = ask_detail(sessions);
+
+        let marks = loop_halt_metas(&detail);
+        assert_eq!(marks.len(), 1, "exactly one notice: {marks:?}");
+        let (turn_idx, meta) = &marks[0];
+        // Prompt 1's assistant turn — NOT prompt 0's, whose reply carries the
+        // same text (the degenerate restatement is why this notice exists).
+        assert_eq!(
+            *turn_idx, 3,
+            "attributed to prompt 1's reply: {:?}",
+            detail.turns.iter().map(|t| &t.role).collect::<Vec<_>>()
+        );
+        assert_eq!(meta["loopHalt"]["version"], 1);
+        assert_eq!(meta["loopHalt"]["tool"], "grep");
+        assert_eq!(meta["loopHalt"]["repeats"], 8);
+
+        // Placed before the final text — where the reminder actually landed —
+        // and paired with a ToolResult so the turn has no orphan tool_use.
+        let blocks = &detail.turns[*turn_idx].blocks;
+        let notice = blocks
+            .iter()
+            .position(|b| matches!(b, ContentBlock::ToolUse { tool_name, .. } if tool_name == "loop_halt"))
+            .unwrap();
+        let last_text = blocks
+            .iter()
+            .rposition(|b| matches!(b, ContentBlock::Text { .. }))
+            .expect("the degraded reply text");
+        assert!(notice < last_text, "notice precedes the reply: {blocks:?}");
+        assert!(matches!(
+            blocks[notice + 1],
+            ContentBlock::ToolResult { .. }
+        ));
+    }
+
+    #[test]
+    fn no_reminder_leaves_the_transcript_untouched() {
+        // No chat_history.jsonl at all, and one without the reminder: both no-ops.
+        let (_tmp, sessions) = loop_halt_fixture(None);
+        assert!(loop_halt_metas(&ask_detail(sessions)).is_empty());
+
+        let clean = concat!(
+            r#"{"type":"user","content":[{"type":"text","text":"go"}],"prompt_index":0}"#, "\n",
+            r#"{"type":"user","content":[{"type":"text","text":"<system-reminder>\nMCP servers connected:\n- codex\n</system-reminder>"}],"synthetic_reason":"system_reminder"}"#, "\n",
+        );
+        let (_tmp2, sessions2) = loop_halt_fixture(Some(clean));
+        assert!(
+            loop_halt_metas(&ask_detail(sessions2)).is_empty(),
+            "an unrelated system reminder is not a halt"
+        );
+    }
+
+    #[test]
+    fn loop_halts_are_one_per_prompt_and_survive_a_reworded_template() {
+        // Two trips inside the same turn say nothing new — one notice. And a
+        // template that no longer names the tool / count still yields a notice,
+        // just without the detail (best-effort extraction).
+        let history = concat!(
+            r#"{"type":"user","content":[{"type":"text","text":"go"}],"prompt_index":1}"#, "\n",
+            r#"{"type":"user","content":[{"type":"text","text":"<system-reminder>\nYou keep going — you appear to be stuck in a polling loop.\n</system-reminder>"}],"synthetic_reason":"system_reminder"}"#, "\n",
+            r#"{"type":"user","content":[{"type":"text","text":"<system-reminder>\nYou have called the same tool (`grep`) with the exact same arguments 8 times in a row — you appear to be stuck in a polling loop.\n</system-reminder>"}],"synthetic_reason":"system_reminder"}"#, "\n",
+        );
+        let (_tmp, sessions) = loop_halt_fixture(Some(history));
+        let marks = loop_halt_metas(&ask_detail(sessions));
+        assert_eq!(marks.len(), 1, "one notice per prompt: {marks:?}");
+        // The FIRST trip won, so the detail is absent rather than guessed.
+        assert_eq!(marks[0].1["loopHalt"]["version"], 1);
+        assert!(marks[0].1["loopHalt"].get("tool").is_none());
+        assert!(marks[0].1["loopHalt"].get("repeats").is_none());
+    }
+
+    #[test]
+    fn loop_halt_before_the_first_prompt_is_ignored() {
+        // Grok's startup injections (skills / MCP lists) precede prompt 0; a halt
+        // fragment with no prompt in flight has no turn to attribute to.
+        let history = concat!(
+            r#"{"type":"user","content":[{"type":"text","text":"<system-reminder>\nyou appear to be stuck in a polling loop\n</system-reminder>"}],"synthetic_reason":"system_reminder"}"#, "\n",
+            r#"{"type":"user","content":[{"type":"text","text":"go"}],"prompt_index":0}"#, "\n",
+        );
+        let (_tmp, sessions) = loop_halt_fixture(Some(history));
+        assert!(loop_halt_metas(&ask_detail(sessions)).is_empty());
     }
 
     // --- grok native ask_user_question answer recovery (chat_history.jsonl) ---

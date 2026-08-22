@@ -3326,6 +3326,11 @@
         "compactedTokens": "上下文已壓縮 · {before} → {after} tokens",
         "failed": "上下文壓縮失敗"
       },
+      "loopHalt": {
+        "halted": "本輪被防迴圈保護中止",
+        "haltedWithTool": "本輪被防迴圈保護中止 · `{tool}` 重複 {repeats} 次",
+        "hint": "Grok 反覆呼叫同一個工具，直到它自己的防迴圈保護要求停止。下面這段回覆是在中止指令下寫出來的，可能是複述先前的答案而非回答本次問題。"
+      },
       "sessionFailure": {
         "category": {
           "connection": "連線異常",

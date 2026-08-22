@@ -52,6 +52,8 @@ import {
   ContextCompactionCard,
   isContextCompactionMeta,
 } from "./context-compaction-card"
+import { LoopHaltCard } from "./loop-halt-card"
+import { isLoopHaltMeta } from "@/lib/loop-halt"
 import { FeedbackCheckResultCard } from "./feedback-check-result-card"
 import { SearchResultsOutput } from "./search-results-output"
 import { parseCodexCommandEnvelope } from "@/lib/codex-command-action"
@@ -2576,6 +2578,13 @@ const ToolCallPart = memo(function ToolCallPart({
   // status card instead of the generic tool shell.
   if (isContextCompactionMeta(part.meta)) {
     return <ContextCompactionCard state={part.state} meta={part.meta} />
+  }
+
+  // Grok's anti-loop guard halted this turn (`_meta.loopHalt`, synthesized by
+  // `parsers/grok.rs` from the model-facing history) → a warning divider marking
+  // the reply below as produced under a halt order.
+  if (isLoopHaltMeta(part.meta)) {
+    return <LoopHaltCard meta={part.meta} />
   }
 
   // Agent/subagent tools get a dedicated container rendering
