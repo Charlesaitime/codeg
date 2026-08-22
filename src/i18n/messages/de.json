@@ -3326,6 +3326,11 @@
         "compactedTokens": "Kontext komprimiert · {before} → {after} Tokens",
         "failed": "Kontextkomprimierung fehlgeschlagen"
       },
+      "loopHalt": {
+        "halted": "Schleifenschutz hat diesen Zug abgebrochen",
+        "haltedWithTool": "Schleifenschutz hat diesen Zug abgebrochen · `{tool}` {repeats}× wiederholt",
+        "hint": "Grok hat denselben Tool-Aufruf wiederholt, bis der eigene Schleifenschutz den Abbruch anordnete. Die folgende Antwort entstand unter diesem Abbruchbefehl und wiederholt womöglich eine frühere Antwort, statt die Frage zu beantworten."
+      },
       "sessionFailure": {
         "category": {
           "connection": "Verbindungsproblem",

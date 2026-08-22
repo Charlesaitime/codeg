@@ -3326,6 +3326,11 @@
         "compactedTokens": "Contexte compacté · {before} → {after} tokens",
         "failed": "Échec de la compaction du contexte"
       },
+      "loopHalt": {
+        "halted": "La protection anti-boucle a interrompu ce tour",
+        "haltedWithTool": "La protection anti-boucle a interrompu ce tour · `{tool}` répété {repeats} fois",
+        "hint": "Grok a répété le même appel d'outil jusqu'à ce que sa propre protection lui ordonne de s'arrêter. La réponse ci-dessous a été écrite sous cet ordre d'arrêt et peut reprendre une réponse antérieure au lieu de répondre à la question."
+      },
       "sessionFailure": {
         "category": {
           "connection": "Problème de connexion",

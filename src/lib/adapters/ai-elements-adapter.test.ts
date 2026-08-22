@@ -157,6 +157,29 @@ describe("groupConsecutiveToolCalls", () => {
     ).toEqual(["tool-call"])
   })
 
+  it("leaves a grok loop-halt notice standalone (no '调用 N 个工具' wrapper)", () => {
+    // The notice warns that the reply below was written under grok's halt
+    // order; folding it into a collapsed tool-group would bury exactly the
+    // thing it exists to raise. Recognition is by meta, not tool name.
+    const halt: AdaptedToolCallPart = {
+      type: "tool-call",
+      toolCallId: "grok-loop-halt-14",
+      toolName: "loop_halt",
+      input: null,
+      state: "output-available",
+      meta: { loopHalt: { version: 1, tool: "grep", repeats: 8 } },
+    }
+    expect(groupConsecutiveToolCalls([halt]).map((p) => p.type)).toEqual([
+      "tool-call",
+    ])
+    // And it breaks the surrounding run of real tool calls it sits between.
+    expect(
+      groupConsecutiveToolCalls([poll("grep"), halt, poll("grep")]).map(
+        (p) => p.type
+      )
+    ).toEqual(["tool-group", "tool-call", "tool-group"])
+  })
+
   it("leaves a context-compaction card standalone (no '调用 N 个工具' wrapper)", () => {
     // codex `_meta.contextCompaction` and Grok's synthesized auto_compact card
     // render through the dedicated subtle <ContextCompactionCard>; a lone one

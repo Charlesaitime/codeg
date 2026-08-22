@@ -3326,6 +3326,11 @@
         "compactedTokens": "上下文已压缩 · {before} → {after} tokens",
         "failed": "上下文压缩失败"
       },
+      "loopHalt": {
+        "halted": "本轮被防循环保护中止",
+        "haltedWithTool": "本轮被防循环保护中止 · `{tool}` 重复 {repeats} 次",
+        "hint": "Grok 反复调用同一个工具，直到它自己的防循环保护要求停止。下面这段回复是在中止指令下写出来的，可能是复述之前的答案而不是回答本次问题。"
+      },
       "sessionFailure": {
         "category": {
           "connection": "连接异常",

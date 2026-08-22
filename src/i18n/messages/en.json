@@ -3326,6 +3326,11 @@
         "compactedTokens": "Context compacted · {before} → {after} tokens",
         "failed": "Context compaction failed"
       },
+      "loopHalt": {
+        "halted": "Loop guard halted this turn",
+        "haltedWithTool": "Loop guard halted this turn · `{tool}` repeated {repeats}×",
+        "hint": "Grok repeated the same tool call until its own guard ordered it to stop. The reply below was written under that halt order and may restate an earlier answer instead of answering the question."
+      },
       "sessionFailure": {
         "category": {
           "connection": "Connection issue",

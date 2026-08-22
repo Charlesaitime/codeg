@@ -16,6 +16,7 @@ import {
 import { normalizeToolName } from "@/lib/tool-call-normalization"
 import { isBackgroundTaskToolCall } from "@/lib/background-task"
 import { isContextCompactionMeta } from "@/lib/context-compaction"
+import { isLoopHaltMeta } from "@/lib/loop-halt"
 import { isUnsettledToolCall } from "@/lib/tool-call-lifecycle"
 import { feedbackCheckHasContent } from "@/lib/feedback-check"
 import {
@@ -1210,7 +1211,11 @@ export function groupConsecutiveToolCalls(
       // synthesized auto_compact card) render through the dedicated subtle
       // <ContextCompactionCard>, so they break the run and render standalone
       // instead of being wrapped in a single-item "调用 1 个工具" tool-group.
-      !isContextCompactionMeta(part.meta)
+      !isContextCompactionMeta(part.meta) &&
+      // Grok anti-loop halt notices (`_meta.loopHalt`) render through the
+      // dedicated <LoopHaltCard>; folding one into a tool-group would bury the
+      // very warning it exists to raise.
+      !isLoopHaltMeta(part.meta)
     ) {
       buffer.push(part)
       continue
